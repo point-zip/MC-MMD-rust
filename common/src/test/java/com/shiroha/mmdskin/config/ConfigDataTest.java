@@ -1,13 +1,16 @@
 /* 文件职责：验证全局客户端配置的归一化、复制与 UTF-8 持久化行为。 */
 package com.shiroha.mmdskin.config;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 
@@ -89,6 +92,15 @@ class ConfigDataTest {
         assertEquals("模型-测试", loaded.mobModelReplacements.get("minecraft:苦力怕"));
         assertEquals(1.0f, loaded.vrArmIKStrength);
         assertEquals(1, loaded.performanceLogIntervalSeconds);
+    }
+
+    @Test
+    void shouldRemoveTemporaryFileAfterAtomicSave(@TempDir Path tempDir) throws IOException {
+        new ConfigData().save(tempDir);
+
+        try (var files = Files.list(tempDir)) {
+            assertFalse(files.anyMatch(path -> path.getFileName().toString().endsWith(".tmp")));
+        }
     }
 
     private static void invokeNormalize(ConfigData data) throws Exception {

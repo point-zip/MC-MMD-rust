@@ -1,3 +1,5 @@
+//! 负责维护 VR 演示中的模型资源、追踪标定与骨骼驱动。
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -5,9 +7,9 @@ use anyhow::{anyhow, Context, Result};
 use glam::{EulerRot, Quat, Vec3};
 use mmd_engine::model::{load_pmx, MmdMaterial, MmdModel, SubMesh};
 use mmd_engine::vrm_runtime::{
-    ArmIkCalibration, ArmIkHandCalibration, BodyTrackingCalibration, HandGripOffset,
-    HandTrackingCalibration, LookAtInput, VrmRenderState, VrmRuntime, VrmRuntimeInput,
-    VrmRuntimeOutput, VrmTrackingInput, VrmView,
+    ArmIkCalibration, BodyTrackingCalibration, HandGripOffset, HandTrackingCalibration,
+    LookAtInput, VrmRenderState, VrmRuntime, VrmRuntimeInput, VrmRuntimeOutput, VrmTrackingInput,
+    VrmView,
 };
 
 pub const MODEL_TO_WORLD_SCALE: f32 = 1.0 / 12.5;
@@ -504,11 +506,7 @@ fn demo_body_calibration() -> BodyTrackingCalibration {
 }
 
 fn demo_arm_ik_calibration() -> ArmIkCalibration {
-    ArmIkCalibration {
-        left: ArmIkHandCalibration::default(),
-        right: ArmIkHandCalibration::default(),
-        forearm_twist_ratio: 0.4,
-    }
+    ArmIkCalibration::default()
 }
 
 fn scene_assets_from_vrm(runtime: &VrmRuntime) -> SceneAssets {

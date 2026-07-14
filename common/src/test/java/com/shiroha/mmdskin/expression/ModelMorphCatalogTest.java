@@ -85,26 +85,6 @@ class ModelMorphCatalogTest {
         }
 
         @Override
-        public int getVertexMorphCount(long modelHandle) {
-            return 0;
-        }
-
-        @Override
-        public int getUvMorphCount(long modelHandle) {
-            return 0;
-        }
-
-        @Override
-        public long getGpuMorphOffsetsSize(long modelHandle) {
-            return 0L;
-        }
-
-        @Override
-        public long getGpuUvMorphOffsetsSize(long modelHandle) {
-            return 0L;
-        }
-
-        @Override
         public int getMorphCount(long modelHandle) {
             return morphsByHandle.getOrDefault(modelHandle, List.of()).size();
         }

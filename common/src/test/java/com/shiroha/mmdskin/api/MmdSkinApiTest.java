@@ -65,26 +65,6 @@ class MmdSkinApiTest {
             }
 
             @Override
-            public int getVertexMorphCount(long modelHandle) {
-                return 0;
-            }
-
-            @Override
-            public int getUvMorphCount(long modelHandle) {
-                return 0;
-            }
-
-            @Override
-            public long getGpuMorphOffsetsSize(long modelHandle) {
-                return 0L;
-            }
-
-            @Override
-            public long getGpuUvMorphOffsetsSize(long modelHandle) {
-                return 0L;
-            }
-
-            @Override
             public int getMorphCount(long modelHandle) {
                 return 0;
             }
@@ -155,26 +135,6 @@ class MmdSkinApiTest {
             }
 
             @Override
-            public int getVertexMorphCount(long modelHandle) {
-                return 0;
-            }
-
-            @Override
-            public int getUvMorphCount(long modelHandle) {
-                return 0;
-            }
-
-            @Override
-            public long getGpuMorphOffsetsSize(long modelHandle) {
-                return 0L;
-            }
-
-            @Override
-            public long getGpuUvMorphOffsetsSize(long modelHandle) {
-                return 0L;
-            }
-
-            @Override
             public int getMorphCount(long modelHandle) {
                 return 0;
             }
@@ -231,15 +191,15 @@ class MmdSkinApiTest {
             }
 
             @Override
-            public void applyVrTrackingInput(long modelHandle, float[] trackingData) {
+            public void setEyeTrackingEnabled(long modelHandle, boolean enabled) {
             }
 
             @Override
-            public void setVrEnabled(long modelHandle, boolean enabled) {
+            public void setEyeMaxAngle(long modelHandle, float maxAngle) {
             }
 
             @Override
-            public void setVrIkParams(long modelHandle, float armIkStrength) {
+            public void setAutoBlinkEnabled(long modelHandle, boolean enabled) {
             }
 
             @Override
@@ -293,26 +253,6 @@ class MmdSkinApiTest {
             @Override
             public int copyRealtimeUvsToBuffer(long modelHandle, ByteBuffer targetBuffer) {
                 return 0;
-            }
-
-            @Override
-            public int getVertexMorphCount(long modelHandle) {
-                return 0;
-            }
-
-            @Override
-            public int getUvMorphCount(long modelHandle) {
-                return 0;
-            }
-
-            @Override
-            public long getGpuMorphOffsetsSize(long modelHandle) {
-                return 0L;
-            }
-
-            @Override
-            public long getGpuUvMorphOffsetsSize(long modelHandle) {
-                return 0L;
             }
 
             @Override

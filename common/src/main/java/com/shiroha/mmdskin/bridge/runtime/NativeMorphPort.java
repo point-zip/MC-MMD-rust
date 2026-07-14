@@ -7,7 +7,5 @@ public interface NativeMorphPort {
 
     void setMorphWeight(long modelHandle, int morphIndex, float weight);
 
-    void syncGpuMorphWeights(long modelHandle);
-
     int applyVpdMorph(long modelHandle, String filePath);
 }

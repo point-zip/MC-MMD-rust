@@ -1,6 +1,10 @@
-//! Morph 变形系统
+//! 负责定义和导出 Morph 领域类型。
 
 mod manager;
+#[expect(
+    clippy::module_inception,
+    reason = "该文件定义 Morph 领域实体，模块名保持公开领域术语"
+)]
 mod morph;
 
 pub use manager::{MaterialMorphResult, MorphManager};

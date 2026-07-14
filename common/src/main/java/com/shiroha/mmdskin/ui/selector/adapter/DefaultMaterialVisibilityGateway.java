@@ -1,13 +1,14 @@
 /* 文件职责：为材质显隐界面提供模型上下文解析、材质读取与配置保存实现。 */
 package com.shiroha.mmdskin.ui.selector.adapter;
 
-import com.shiroha.mmdskin.bridge.runtime.NativeModelBridgePorts;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
 import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
 import com.shiroha.mmdskin.bridge.runtime.NativeModelQueryPort;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
+import com.shiroha.mmdskin.client.model.ModelKey;
 import com.shiroha.mmdskin.config.ModelConfigData;
 import com.shiroha.mmdskin.config.ModelConfigManager;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.ui.config.ModelSelectorConfig;
 import com.shiroha.mmdskin.ui.selector.application.MaterialVisibilityApplicationService.MaterialEntryState;
 import com.shiroha.mmdskin.ui.selector.application.MaterialVisibilityApplicationService.MaterialScreenContext;
@@ -28,7 +29,7 @@ public class DefaultMaterialVisibilityGateway implements MaterialVisibilityGatew
     private final NativeModelQueryPort nativeModelQueryPort;
 
     public DefaultMaterialVisibilityGateway() {
-        this(NativeModelBridgePorts.modelPort(), NativeModelBridgePorts.queryPort());
+        this(NativePortAdapters.model(), NativePortAdapters.modelQuery());
     }
 
     DefaultMaterialVisibilityGateway(NativeModelPort nativeModelPort, NativeModelQueryPort nativeModelQueryPort) {
@@ -50,13 +51,15 @@ public class DefaultMaterialVisibilityGateway implements MaterialVisibilityGatew
             return Optional.empty();
         }
 
-        MMDModelManager.Model model = MMDModelManager.GetModel(modelName, playerCacheKey);
-        if (model == null) {
+        ModelKey key = new ModelKey(modelName, playerCacheKey, ModelKey.Usage.ENTITY);
+        var lease = MmdClientRenderRuntime.current().acquire(key).orElse(null);
+        if (lease == null) {
             LOGGER.warn("无法获取玩家模型: {}_{}", modelName, playerCacheKey);
             return Optional.empty();
         }
-
-        return Optional.of(new MaterialScreenContext(model.model.getModelHandle(), modelName, modelName));
+        try (lease) {
+            return Optional.of(new MaterialScreenContext(lease.instance().handle(), modelName, modelName));
+        }
     }
 
     @Override

@@ -1,9 +1,8 @@
 /* 文件职责：把 VR 追踪数据转换到模型局部空间并驱动原生 IK。 */
 package com.shiroha.mmdskin.compat.vr;
 
-import com.shiroha.mmdskin.bridge.runtime.NativeModelBridgePorts;
-import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
-import com.shiroha.mmdskin.player.runtime.FirstPersonManager;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
+import com.shiroha.mmdskin.bridge.runtime.NativeVrPort;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
@@ -18,13 +17,13 @@ public final class VRBoneDriver {
     static final int TRACKING_PACKET_LENGTH = TRACKING_POINT_STRIDE * 3;
 
     private static final Logger LOGGER = LogManager.getLogger();
-    private static volatile NativeModelPort modelPort = NativeModelBridgePorts.modelPort();
+    private static volatile NativeVrPort vrPort = NativePortAdapters.vr();
 
     private VRBoneDriver() {
     }
 
-    public static void configureRuntimeCollaborators(NativeModelPort modelPort) {
-        VRBoneDriver.modelPort = modelPort != null ? modelPort : NativeModelBridgePorts.modelPort();
+    public static void configureRuntimeCollaborators(NativeVrPort vrPort) {
+        VRBoneDriver.vrPort = vrPort != null ? vrPort : NativePortAdapters.vr();
     }
 
     public static boolean isVRPlayer(Player player) {
@@ -35,7 +34,8 @@ public final class VRBoneDriver {
         }
     }
 
-    public static boolean driveModel(long modelHandle, Player player, float tickDelta) {
+    public static boolean driveModel(long modelHandle, Player player, float tickDelta,
+                                     Vec3 modelRootOffset) {
         if (modelHandle == 0 || player == null) {
             return false;
         }
@@ -47,7 +47,7 @@ public final class VRBoneDriver {
             }
 
             Vec3 renderOrigin = VRDataProvider.getRenderOrigin(player, tickDelta)
-                    .add(FirstPersonManager.getLocalVrModelRootOffset(player));
+                    .add(modelRootOffset == null ? Vec3.ZERO : modelRootOffset);
             if (!isFiniteVec3(renderOrigin)) {
                 LOGGER.debug("Skipped VR bone drive because render origin was invalid");
                 return false;
@@ -69,7 +69,7 @@ public final class VRBoneDriver {
                 return false;
             }
 
-            modelPort.applyVrTrackingInput(modelHandle, localTracking);
+            vrPort.applyTrackingInput(modelHandle, localTracking);
             return true;
         } catch (Exception e) {
             LOGGER.debug("VR bone driving failed", e);
@@ -186,7 +186,7 @@ public final class VRBoneDriver {
             return;
         }
         try {
-            modelPort.setVrEnabled(modelHandle, enabled);
+            vrPort.setEnabled(modelHandle, enabled);
         } catch (Exception e) {
             LOGGER.debug("Failed to set VR mode", e);
         }
@@ -197,7 +197,7 @@ public final class VRBoneDriver {
             return;
         }
         try {
-            modelPort.setVrIkParams(modelHandle, armIKStrength);
+            vrPort.setIkParams(modelHandle, armIKStrength);
         } catch (Exception e) {
             LOGGER.debug("Failed to set VR IK params", e);
         }

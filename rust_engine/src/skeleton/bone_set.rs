@@ -1,4 +1,4 @@
-//! 骨骼集合 - 参考 nphysics Multibody 设计
+//! 负责骨架索引、层级更新与变换缓存。
 
 use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
@@ -481,7 +481,7 @@ impl BoneSet {
     /// 添加骨骼旋转（头部/眼球追踪等非 VMD 数据，不做坐标系转换）
     pub fn add_bone_rotation(&mut self, index: usize, rotation: Quat) {
         if let Some(bone) = self.links.get_mut(index) {
-            bone.animation_rotate = bone.animation_rotate * rotation;
+            bone.animation_rotate *= rotation;
         }
     }
 

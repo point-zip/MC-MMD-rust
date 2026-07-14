@@ -1,14 +1,12 @@
 /* 文件职责：构建 Fabric 侧模组配置界面并同步运行时配置。 */
 package com.shiroha.mmdskin.fabric.config;
 
-import com.shiroha.mmdskin.NativeFunc;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
 import com.shiroha.mmdskin.asset.catalog.ModelInfo;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
 import com.shiroha.mmdskin.config.ConfigData;
 import com.shiroha.mmdskin.config.UIConstants;
 import com.shiroha.mmdskin.fabric.render.MobReplacementTargets;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
-import com.shiroha.mmdskin.renderer.runtime.model.opengl.MMDModelOpenGL;
-import com.shiroha.mmdskin.renderer.runtime.mode.RenderModeManager;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -31,7 +29,6 @@ public final class ModConfigScreen {
 
     public static Screen create(Screen parent) {
         ConfigData data = MmdSkinConfig.getData();
-        ConfigSnapshot snapshot = ConfigSnapshot.capture(data);
 
         ConfigBuilder builder = ConfigBuilder.create()
             .setParentScreen(parent)
@@ -46,7 +43,7 @@ public final class ModConfigScreen {
         buildVrCategory(builder, entryBuilder, data);
         buildMobReplacementCategory(builder, entryBuilder, data);
 
-        builder.setSavingRunnable(() -> saveConfig(data, snapshot));
+        builder.setSavingRunnable(() -> saveConfig(data));
         return builder.build();
     }
 
@@ -54,17 +51,17 @@ public final class ModConfigScreen {
         ConfigCategory category = builder.getOrCreateCategory(Component.translatable("gui.mmdskin.mod_settings.category.render"));
 
         category.addEntry(entryBuilder
-            .startBooleanToggle(Component.translatable("gui.mmdskin.mod_settings.opengl_lighting"), data.openGLEnableLighting)
+            .startBooleanToggle(Component.translatable("gui.mmdskin.mod_settings.lighting"), data.lightingEnabled)
             .setDefaultValue(true)
-            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.opengl_lighting.tooltip"))
-            .setSaveConsumer(value -> data.openGLEnableLighting = value)
+            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.lighting.tooltip"))
+            .setSaveConsumer(value -> data.lightingEnabled = value)
             .build());
 
         category.addEntry(entryBuilder
-            .startBooleanToggle(Component.translatable("gui.mmdskin.mod_settings.mmd_shader"), data.mmdShaderEnabled)
-            .setDefaultValue(false)
-            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.mmd_shader.tooltip"))
-            .setSaveConsumer(value -> data.mmdShaderEnabled = value)
+            .startBooleanToggle(Component.translatable("gui.mmdskin.mod_settings.gpu_skinning"), data.gpuSkinningEnabled)
+            .setDefaultValue(true)
+            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.gpu_skinning.tooltip"))
+            .setSaveConsumer(value -> data.gpuSkinningEnabled = value)
             .build());
 
         category.addEntry(entryBuilder
@@ -105,27 +102,6 @@ public final class ModConfigScreen {
             .setDefaultValue(20)
             .setTooltip(Component.translatable("gui.mmdskin.mod_settings.model_pool_max.tooltip"))
             .setSaveConsumer(value -> data.modelPoolMaxCount = value)
-            .build());
-
-        category.addEntry(entryBuilder
-            .startBooleanToggle(Component.translatable("gui.mmdskin.mod_settings.gpu_skinning"), data.gpuSkinningEnabled)
-            .setDefaultValue(false)
-            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.gpu_skinning.tooltip"))
-            .setSaveConsumer(value -> data.gpuSkinningEnabled = value)
-            .build());
-
-        category.addEntry(entryBuilder
-            .startBooleanToggle(Component.translatable("gui.mmdskin.mod_settings.gpu_morph"), data.gpuMorphEnabled)
-            .setDefaultValue(false)
-            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.gpu_morph.tooltip"))
-            .setSaveConsumer(value -> data.gpuMorphEnabled = value)
-            .build());
-
-        category.addEntry(entryBuilder
-            .startIntSlider(Component.translatable("gui.mmdskin.mod_settings.max_bones"), data.maxBones, 512, 4096)
-            .setDefaultValue(2048)
-            .setTooltip(Component.translatable("gui.mmdskin.mod_settings.max_bones.tooltip"))
-            .setSaveConsumer(value -> data.maxBones = value)
             .build());
 
         category.addEntry(entryBuilder
@@ -444,17 +420,10 @@ public final class ModConfigScreen {
         }
     }
 
-    static void saveConfig(ConfigData data, ConfigSnapshot snapshot) {
+    static void saveConfig(ConfigData data) {
         cleanupInvalidMobReplacements(data);
         MmdSkinConfig.save();
-
-        RenderModeManager.setUseGpuSkinning(data.gpuSkinningEnabled);
-        MMDModelOpenGL.isMMDShaderEnabled = data.mmdShaderEnabled;
-
-        if (snapshot.requiresModelReload(data)) {
-            MMDModelManager.forceReloadAllModels();
-        }
-
+        MmdClientRenderRuntime.current().models().tick();
         applyPhysicsConfig(data);
     }
 
@@ -505,7 +474,7 @@ public final class ModConfigScreen {
 
     private static void applyPhysicsConfig(ConfigData data) {
         try {
-            NativeFunc.GetInst().SetPhysicsConfig(
+            NativePortAdapters.physics().configure(
                 data.physicsEnabled,
                 data.physicsGravityY,
                 data.physicsFps,
@@ -522,29 +491,4 @@ public final class ModConfigScreen {
         }
     }
 
-    private record ConfigSnapshot(
-        boolean gpuSkinningEnabled,
-        boolean gpuMorphEnabled,
-        boolean mmdShaderEnabled,
-        int maxBones,
-        int textureCacheBudgetMB
-    ) {
-        static ConfigSnapshot capture(ConfigData data) {
-            return new ConfigSnapshot(
-                data.gpuSkinningEnabled,
-                data.gpuMorphEnabled,
-                data.mmdShaderEnabled,
-                data.maxBones,
-                data.textureCacheBudgetMB
-            );
-        }
-
-        boolean requiresModelReload(ConfigData data) {
-            return gpuSkinningEnabled != data.gpuSkinningEnabled
-                || gpuMorphEnabled != data.gpuMorphEnabled
-                || mmdShaderEnabled != data.mmdShaderEnabled
-                || maxBones != data.maxBones
-                || textureCacheBudgetMB != data.textureCacheBudgetMB;
-        }
-    }
 }

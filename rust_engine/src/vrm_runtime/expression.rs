@@ -1,4 +1,4 @@
-//! Expression runtime flow adapted from UniVRM's `Vrm10RuntimeExpression`.
+//! 负责计算并应用 VRM 表情与视线权重。
 
 use std::collections::HashMap;
 
@@ -126,8 +126,10 @@ impl ExpressionRuntime {
     }
 
     fn compute_state(&self, requested: &HashMap<ExpressionKey, f32>) -> ExpressionRuntimeState {
-        let mut state = ExpressionRuntimeState::default();
-        state.input_weights = requested.clone();
+        let mut state = ExpressionRuntimeState {
+            input_weights: requested.clone(),
+            ..ExpressionRuntimeState::default()
+        };
 
         for (key, clip) in &self.clips {
             let mut weight = requested.get(key).copied().unwrap_or(0.0).clamp(0.0, 1.0);

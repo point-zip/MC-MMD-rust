@@ -1,15 +1,16 @@
 # MC-MMD-rust
 
-在 Minecraft 1.21.4 中实现 MMD（MikuMikuDance）模型渲染和物理模拟的 Mod。
+面向 Minecraft 1.21.5 的 MMD（MikuMikuDance）模型、动画和物理模组，同时支持 Fabric 与 NeoForge。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 功能特性
 
-- **PMX 模型加载**: 在 Minecraft 中加载和渲染 MMD 模型
-- **VMD 动画播放**: 支持骨骼和表情变形的 MMD 动画播放
-- **物理模拟**: 使用 Rapier3D 实现头发、衣物、配饰的实时物理效果
-- **GPU 蒙皮**: 通过 Compute Shader 实现高性能顶点蒙皮
+- **PMX / VRM 模型加载**: 在 Minecraft 中加载和渲染角色模型
+- **VMD / FBX / VPD**: 支持骨骼动画、表情、Morph 和姿态数据
+- **物理模拟**: 使用 Bullet3 实现头发、衣物和配饰的实时物理效果
+- **GPU 蒙皮与 CPU 回退**: Rust 统一执行动画、Morph 和物理，RenderPipeline 顶点着色器执行 palette 蒙皮，不可用时回退 CPU
+- **1.21.5 渲染管线**: 使用 `RenderPipeline`、`GpuBuffer`、`GpuTexture` 与批量 `RenderPass`
 - **多层动画**: 支持多个动画同时混合播放
 
 ## 架构
@@ -19,13 +20,15 @@
 1. **rust_engine**: 基于 Rust 的 MMD 物理和动画引擎
    - PMX/VMD 格式解析
    - 骨骼层次管理
-   - 物理模拟（Rapier3D）
-   - JNI 绑定用于 Java 交互
+   - Bullet3 物理模拟
+   - 受检 JNI bridge，不向 Java 暴露裸 native 指针
 
 2. **Minecraft Mod**（Common/Fabric/NeoForge）: 基于 Java 的渲染和集成
-   - OpenGL 模型渲染
-   - Compute Shader 蒙皮
-   - Iris 光影兼容
+   - Fabric / NeoForge 加载器适配
+   - Blaze3D `RenderPipeline` 与 GPU 资源生命周期
+   - 异步模型/纹理解码、帧队列和兼容回退
+
+1.21.5 后端使用 48 骨骼 palette 的顶点着色器蒙皮，不依赖 Compute Shader、SSBO 或裸 OpenGL。Morph 与 Bullet 物理仍由 Rust CPU 完整求值，只有 Morph 结果变化时才更新顶点缓冲；骨骼姿态通过独立的 `f32 mat4` palette revision 每帧同步。
 
 ## 使用教程
 
@@ -58,7 +61,6 @@
     ├── CustomAnim/            # 用户自定义动画
     ├── DefaultMorph/          # 系统预设表情
     ├── CustomMorph/           # 用户自定义表情
-    └── Shader/                # 自定义着色器
 ```
 
 ### 文件夹详解
@@ -259,7 +261,7 @@ EntityPlayer/
 
 ### 前置要求
 
-- Rust 1.70+（用于 rust_engine）
+- Rust 1.88+（用于 rust_engine）
 - JDK 21+（用于 Minecraft mod）
 - Gradle 8.x
 
@@ -267,7 +269,7 @@ EntityPlayer/
 
 ```bash
 cd rust_engine
-cargo build --release
+cargo build --release --locked
 ```
 
 ### 构建 Minecraft Mod
@@ -289,7 +291,7 @@ cargo build --release
 
 | 库 | 许可证 | 说明 |
 |----|--------|------|
-| [Rapier](https://rapier.rs) | Apache-2.0 | 3D 物理引擎 |
+| [Bullet3](https://github.com/bulletphysics/bullet3) | zlib | 3D 物理引擎 |
 | [glam](https://github.com/bitshifter/glam-rs) | MIT/Apache-2.0 | 3D 数学库 |
 | [mmd-rs](https://github.com/aankor/mmd-rs) | BSD-2-Clause | MMD 格式解析器 |
 

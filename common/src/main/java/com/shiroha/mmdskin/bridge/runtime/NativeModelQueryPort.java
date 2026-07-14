@@ -42,26 +42,6 @@ public interface NativeModelQueryPort {
         }
 
         @Override
-        public int getVertexMorphCount(long modelHandle) {
-            return 0;
-        }
-
-        @Override
-        public int getUvMorphCount(long modelHandle) {
-            return 0;
-        }
-
-        @Override
-        public long getGpuMorphOffsetsSize(long modelHandle) {
-            return 0L;
-        }
-
-        @Override
-        public long getGpuUvMorphOffsetsSize(long modelHandle) {
-            return 0L;
-        }
-
-        @Override
         public int getMorphCount(long modelHandle) {
             return 0;
         }
@@ -99,14 +79,6 @@ public interface NativeModelQueryPort {
     int copyBonePositionsToBuffer(long modelHandle, ByteBuffer targetBuffer);
 
     int copyRealtimeUvsToBuffer(long modelHandle, ByteBuffer targetBuffer);
-
-    int getVertexMorphCount(long modelHandle);
-
-    int getUvMorphCount(long modelHandle);
-
-    long getGpuMorphOffsetsSize(long modelHandle);
-
-    long getGpuUvMorphOffsetsSize(long modelHandle);
 
     int getMorphCount(long modelHandle);
 

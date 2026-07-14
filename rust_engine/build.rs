@@ -1,8 +1,8 @@
+// 负责配置并编译 Bullet3 原生物理依赖。
 /// Bullet3 C++ 编译脚本
 ///
 /// 使用 cc crate 编译 Bullet3 源码和 C Wrapper，
 /// 生成静态库链接到 Rust cdylib。
-
 fn main() {
     let bullet3_dir = "deps/bullet3/src";
     let wrapper_dir = "bullet_wrapper";
@@ -13,7 +13,7 @@ fn main() {
     // LinearMath（排除 TaskScheduler 线程相关文件，我们不需要多线程物理）
     for entry in std::fs::read_dir(format!("{}/LinearMath", bullet3_dir)).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().map_or(false, |e| e == "cpp") {
+        if path.extension().is_some_and(|e| e == "cpp") {
             cpp_files.push(path.to_string_lossy().into_owned());
         }
     }
@@ -31,7 +31,7 @@ fn main() {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries {
                 let path = entry.unwrap().path();
-                if path.extension().map_or(false, |e| e == "cpp") {
+                if path.extension().is_some_and(|e| e == "cpp") {
                     cpp_files.push(path.to_string_lossy().into_owned());
                 }
             }
@@ -52,7 +52,7 @@ fn main() {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries {
                 let path = entry.unwrap().path();
-                if path.extension().map_or(false, |e| e == "cpp") {
+                if path.extension().is_some_and(|e| e == "cpp") {
                     cpp_files.push(path.to_string_lossy().into_owned());
                 }
             }
@@ -108,6 +108,6 @@ fn main() {
     }
 
     // 重新编译条件
-    println!("cargo:rerun-if-changed={}", wrapper_dir);
-    println!("cargo:rerun-if-changed={}", bullet3_dir);
+    println!("cargo:rerun-if-changed={wrapper_dir}");
+    println!("cargo:rerun-if-changed={bullet3_dir}");
 }

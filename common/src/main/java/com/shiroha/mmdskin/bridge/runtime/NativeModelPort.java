@@ -3,6 +3,8 @@ package com.shiroha.mmdskin.bridge.runtime;
 
 public interface NativeModelPort {
 
+    default boolean setGpuSkinningEnabled(long modelHandle, boolean enabled) { return false; }
+
     boolean setLayerBoneMask(long modelHandle, int layer, String rootBoneName);
 
     boolean setLayerBoneExclude(long modelHandle, int layer, String rootBoneName);
@@ -13,11 +15,11 @@ public interface NativeModelPort {
 
     void getEyeBonePosition(long modelHandle, float[] output);
 
-    void applyVrTrackingInput(long modelHandle, float[] trackingData);
+    void setEyeTrackingEnabled(long modelHandle, boolean enabled);
 
-    void setVrEnabled(long modelHandle, boolean enabled);
+    void setEyeMaxAngle(long modelHandle, float maxAngle);
 
-    void setVrIkParams(long modelHandle, float armIkStrength);
+    void setAutoBlinkEnabled(long modelHandle, boolean enabled);
 
     int getMaterialCount(long modelHandle);
 

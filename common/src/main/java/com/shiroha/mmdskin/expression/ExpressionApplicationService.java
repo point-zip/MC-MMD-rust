@@ -1,7 +1,7 @@
 /* 文件职责：把预设表情或 VPD 表情应用到模型实例。 */
 package com.shiroha.mmdskin.expression;
 
-import com.shiroha.mmdskin.bridge.runtime.NativeMorphBridgePorts;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
 import com.shiroha.mmdskin.bridge.runtime.NativeMorphPort;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
 import java.io.File;
@@ -25,15 +25,11 @@ public final class ExpressionApplicationService {
         }
 
         @Override
-        public void syncGpuMorphWeights(long modelHandle) {
-        }
-
-        @Override
         public int applyVpdMorph(long modelHandle, String filePath) {
             return -1;
         }
     };
-    private static volatile NativeMorphPort morphPort = NativeMorphBridgePorts.morphPort();
+    private static volatile NativeMorphPort morphPort = NativePortAdapters.morph();
 
     private ExpressionApplicationService() {
     }
@@ -47,11 +43,12 @@ public final class ExpressionApplicationService {
             return false;
         }
 
-        PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player);
-        if (resolved == null || resolved.model() == null || resolved.model().model == null) {
-            return false;
+        try (PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player)) {
+            if (resolved == null) {
+                return false;
+            }
+            return apply(resolved.model().handle(), selection, resolved.playerName());
         }
-        return apply(resolved.model().model.getModelHandle(), selection, resolved.playerName());
     }
 
     public static boolean apply(long modelHandle, ExpressionSelection selection, String playerName) {
@@ -90,7 +87,6 @@ public final class ExpressionApplicationService {
         for (var entry : resolvedPreset.weights().entrySet()) {
             nativeBridge.setMorphWeight(modelHandle, entry.getKey(), entry.getValue());
         }
-        nativeBridge.syncGpuMorphWeights(modelHandle);
         PRESET_STATE.put(modelHandle, ConcurrentHashMap.newKeySet(resolvedPreset.weights().size()));
         PRESET_STATE.get(modelHandle).addAll(resolvedPreset.weights().keySet());
         return true;
@@ -116,9 +112,6 @@ public final class ExpressionApplicationService {
         Set<Integer> indices = PRESET_STATE.getOrDefault(modelHandle, Collections.emptySet());
         for (Integer index : indices) {
             nativeBridge.setMorphWeight(modelHandle, index, 0.0f);
-        }
-        if (!indices.isEmpty()) {
-            nativeBridge.syncGpuMorphWeights(modelHandle);
         }
         PRESET_STATE.remove(modelHandle);
     }

@@ -1,3 +1,5 @@
+//! 负责维护 VR 演示的校准控制窗口与输入状态。
+
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -330,11 +332,14 @@ impl ArmIkCalibrationUiState {
             arm_ik_calibration: ArmIkCalibration {
                 left: ArmIkHandCalibration {
                     wrist_offset_model: meters_to_model(self.left),
+                    ..ArmIkHandCalibration::default()
                 },
                 right: ArmIkHandCalibration {
                     wrist_offset_model: meters_to_model(self.right),
+                    ..ArmIkHandCalibration::default()
                 },
                 forearm_twist_ratio: self.forearm_twist_ratio.clamp(0.0, 1.0),
+                ..ArmIkCalibration::default()
             },
         }
     }

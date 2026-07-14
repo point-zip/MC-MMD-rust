@@ -1,8 +1,6 @@
+// 文件职责：把配置数据对象适配为运行时配置读取接口。
 package com.shiroha.mmdskin.config;
 
-/**
- * 文件职责：把配置数据对象适配为运行时配置读取接口。
- */
 public abstract class AbstractMmdSkinConfig implements ConfigManager.IConfigProvider {
     protected ConfigData data;
 
@@ -10,12 +8,9 @@ public abstract class AbstractMmdSkinConfig implements ConfigManager.IConfigProv
         this.data = data;
     }
 
-    @Override public boolean isOpenGLLightingEnabled() { return data.openGLEnableLighting; }
-    @Override public int getModelPoolMaxCount() { return data.modelPoolMaxCount; }
-    @Override public boolean isMMDShaderEnabled() { return data.mmdShaderEnabled; }
+    @Override public boolean isLightingEnabled() { return data.lightingEnabled; }
     @Override public boolean isGpuSkinningEnabled() { return data.gpuSkinningEnabled; }
-    @Override public boolean isGpuMorphEnabled() { return data.gpuMorphEnabled; }
-    @Override public int getMaxBones() { return data.maxBones; }
+    @Override public int getModelPoolMaxCount() { return data.modelPoolMaxCount; }
     @Override public boolean isPerformanceProfilingEnabled() { return data.performanceProfilingEnabled; }
     @Override public int getPerformanceLogIntervalSeconds() { return data.performanceLogIntervalSeconds; }
     @Override public int getMaxVisibleModelsPerFrame() { return data.maxVisibleModelsPerFrame; }

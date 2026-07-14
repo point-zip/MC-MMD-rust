@@ -1,4 +1,4 @@
-//! VR IK solver.
+//! 负责将 VR 追踪姿态求解为骨架 IK 结果。
 
 use glam::{Mat3, Mat4, Quat, Vec3};
 
@@ -283,6 +283,7 @@ impl LowerArmChain {
     }
 }
 
+#[derive(Default)]
 struct BoneCache {
     root: Option<usize>,
     center: Option<usize>,
@@ -304,35 +305,16 @@ struct BoneCache {
     initialized: bool,
 }
 
-impl Default for BoneCache {
-    fn default() -> Self {
-        Self {
-            root: None,
-            center: None,
-            groove: None,
-            hips: None,
-            head: None,
-            neck: None,
-            upper_body: None,
-            chest: None,
-            upper_chest: None,
-            left_shoulder: None,
-            right_shoulder: None,
-            left_arm: None,
-            left_elbow: None,
-            left_wrist: None,
-            right_arm: None,
-            right_elbow: None,
-            right_wrist: None,
-            initialized: false,
-        }
-    }
-}
-
 pub struct VrIkSolver {
     cache: BoneCache,
     left_zero_wrist_offset_warned: bool,
     right_zero_wrist_offset_warned: bool,
+}
+
+impl Default for VrIkSolver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VrIkSolver {
@@ -569,6 +551,10 @@ impl VrIkSolver {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "手臂 IK 热路径直接借用骨架与标定值，避免逐帧上下文分配"
+    )]
     fn solve_arm_ik(
         &mut self,
         bones: &mut BoneManager,
@@ -681,6 +667,10 @@ impl VrIkSolver {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "应用 IK 结果需要一组紧密相关的骨骼索引且不产生临时分配"
+    )]
     fn apply_arm_result(
         &self,
         bones: &mut BoneManager,
@@ -766,6 +756,10 @@ impl VrIkSolver {
             .unwrap_or(new_elbow)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "手臂原点求解直接读取骨架状态以保持热路径无分配"
+    )]
     fn resolve_arm_origin(
         &self,
         bones: &mut BoneManager,
@@ -835,6 +829,10 @@ impl VrIkSolver {
             .or(self.cache.upper_chest)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "腕部目标由实时追踪与标定共同决定，参数均为无分配借用或小值"
+    )]
     fn resolve_wrist_target(
         &mut self,
         bones: &BoneManager,

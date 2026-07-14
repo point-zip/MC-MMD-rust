@@ -1,7 +1,11 @@
+// 负责把玩家模型选择解析为带租约的 Model Instance。
 package com.shiroha.mmdskin.player.model;
 
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
+import com.shiroha.mmdskin.client.model.MmdModelInstance;
+import com.shiroha.mmdskin.client.model.ModelKey;
+import com.shiroha.mmdskin.client.model.ModelLease;
 import com.shiroha.mmdskin.config.UIConstants;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.ui.network.PlayerModelSyncManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Player;
@@ -14,7 +18,16 @@ public final class PlayerModelResolver {
     private PlayerModelResolver() {
     }
 
-    public record Result(MMDModelManager.Model model, String playerName) {}
+    public record Result(ModelLease modelLease, String playerName) implements AutoCloseable {
+        public MmdModelInstance model() {
+            return modelLease.instance();
+        }
+
+        @Override
+        public void close() {
+            modelLease.close();
+        }
+    }
 
     public static String getCacheKey(Player player) {
         if (player == null) return "unknown";
@@ -40,11 +53,9 @@ public final class PlayerModelResolver {
             return null;
         }
 
-        MMDModelManager.Model m = MMDModelManager.GetModel(selectedModel, getCacheKey(player));
-        if (m == null) {
-            return null;
-        }
-
-        return new Result(m, playerName);
+        ModelKey key = new ModelKey(selectedModel, getCacheKey(player), ModelKey.Usage.ENTITY);
+        return MmdClientRenderRuntime.current().acquire(key)
+                .map(lease -> new Result(lease, playerName))
+                .orElse(null);
     }
 }

@@ -1,4 +1,4 @@
-//! VRM extension parsing for runtime-facing metadata.
+//! 负责解析 VRM 扩展并生成运行时元数据。
 //!
 //! The runtime metadata shape is intentionally modeled after UniVRM's runtime
 //! semantics:
@@ -7,7 +7,7 @@
 //! - `Packages/VRM10/Runtime/Components/LookAt/*.cs`
 //! - `Packages/VRM10/Runtime/Components/Constraint/*.cs`
 //! - `Packages/VRM10/Runtime/Components/Expression/*.cs`
-//! The original UniVRM implementation is MIT licensed.
+//!   The original UniVRM implementation is MIT licensed.
 
 use std::collections::{HashMap, HashSet};
 

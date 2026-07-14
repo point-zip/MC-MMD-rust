@@ -1,4 +1,4 @@
-//! IK 求解器 - 参考 nphysics 约束求解思想重新实现
+//! 负责求解 MMD 骨骼 IK 约束。
 
 use glam::{Mat3, Quat, Vec3};
 use std::f32::consts::PI;
@@ -224,6 +224,10 @@ impl IkSolver {
     }
 
     /// 单轴求解（膝盖等关节）
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "平面 IK 热路径使用借用参数，避免构造临时上下文"
+    )]
     fn solve_plane(
         &self,
         bones: &mut [BoneLink],

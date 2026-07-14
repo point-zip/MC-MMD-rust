@@ -1,3 +1,5 @@
+//! 负责定义并校准 VRM 实时追踪输入。
+
 use std::collections::HashMap;
 
 use glam::{EulerRot, Quat, Vec3};
@@ -137,8 +139,6 @@ impl BodyTrackingCalibration {
             },
             body_translation_clamp_model: if self.body_translation_clamp_model.is_nan() {
                 defaults.body_translation_clamp_model
-            } else if self.body_translation_clamp_model <= 0.0 {
-                self.body_translation_clamp_model
             } else {
                 self.body_translation_clamp_model
             },

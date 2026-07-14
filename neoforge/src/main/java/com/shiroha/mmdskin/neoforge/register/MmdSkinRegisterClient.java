@@ -2,8 +2,9 @@
 package com.shiroha.mmdskin.neoforge.register;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.shiroha.mmdskin.client.entity.LegacyEntityMmdRenderer;
+import com.shiroha.mmdskin.neoforge.render.NeoForgeRenderAdapter;
 import com.shiroha.mmdskin.neoforge.config.ModConfigScreen;
-import com.shiroha.mmdskin.renderer.integration.entity.MmdSkinRenderFactory;
 import com.shiroha.mmdskin.ui.wheel.ConfigWheelScreen;
 import com.shiroha.mmdskin.util.KeyMappingUtil;
 import java.io.File;
@@ -36,6 +37,7 @@ public final class MmdSkinRegisterClient {
     private static final NeoForgeClientNetworkBindings NETWORK_BINDINGS = new NeoForgeClientNetworkBindings();
     private static final NeoForgeClientRuntimeHooks RUNTIME_HOOKS =
         new NeoForgeClientRuntimeHooks(KEY_CONFIG_WHEEL, KEY_QUICK_MODELS);
+    private static final NeoForgeRenderAdapter RENDER_ADAPTER = new NeoForgeRenderAdapter();
 
     static {
         for (int i = 0; i < KEY_QUICK_MODELS.length; i++) {
@@ -57,6 +59,7 @@ public final class MmdSkinRegisterClient {
         ConfigWheelScreen.setModSettingsScreenFactory(() -> ModConfigScreen.create(null));
         NETWORK_BINDINGS.register();
         NeoForge.EVENT_BUS.register(RUNTIME_HOOKS);
+        NeoForge.EVENT_BUS.register(RENDER_ADAPTER);
     }
 
     @OnlyIn(Dist.CLIENT)
@@ -86,7 +89,8 @@ public final class MmdSkinRegisterClient {
 
             String entityTypeId = name.replace('.', ':');
             EntityType.byString(entityTypeId).ifPresentOrElse(
-                entityType -> event.registerEntityRenderer(entityType, new MmdSkinRenderFactory<>(entityTypeId)),
+                entityType -> event.registerEntityRenderer(entityType,
+                        context -> new LegacyEntityMmdRenderer<>(context, name)),
                 () -> LOGGER.warn("{} 实体不存在，跳过渲染注册", entityTypeId)
             );
         }

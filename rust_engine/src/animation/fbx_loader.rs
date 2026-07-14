@@ -1,4 +1,4 @@
-//! FBX 动画加载器
+//! 负责加载并重定向 FBX 骨骼动画。
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
@@ -156,7 +156,7 @@ fn extract_animation(nodes: &[FbxNode], stack_name: Option<&str>) -> Result<Moti
                         .properties
                         .get(1)
                         .and_then(|p| p.as_string())
-                        .map(|s| clean_fbx_name(s))
+                        .map(clean_fbx_name)
                         .unwrap_or_default();
                     anim_stacks.push((id, name));
                 }
@@ -205,10 +205,11 @@ fn extract_animation(nodes: &[FbxNode], stack_name: Option<&str>) -> Result<Moti
         if all_curve_node_ids.contains(&child_id) && anim_layer_ids.contains(&parent_id) {
             cn_to_layer.insert(child_id, parent_id);
         }
-        if models.contains_key(&child_id) && models.contains_key(&parent_id) {
-            if models[&parent_id].is_bone {
-                model_parent.insert(child_id, parent_id);
-            }
+        if models.contains_key(&child_id)
+            && models.contains_key(&parent_id)
+            && models[&parent_id].is_bone
+        {
+            model_parent.insert(child_id, parent_id);
         }
     }
 
@@ -347,17 +348,17 @@ fn extract_animation(nodes: &[FbxNode], stack_name: Option<&str>) -> Result<Moti
                     curve_to_cn.insert(child_id, (parent_id, axis));
                 }
             }
-        } else if conn_type == "OO" {
-            if curves.contains_key(&child_id) && curve_node_ids.contains(&parent_id) {
-                if !curve_to_cn.contains_key(&child_id) {
-                    let count = curve_to_cn
-                        .values()
-                        .filter(|(cn, _)| *cn == parent_id)
-                        .count();
-                    if count < 3 {
-                        curve_to_cn.insert(child_id, (parent_id, count as u8));
-                    }
-                }
+        } else if conn_type == "OO"
+            && curves.contains_key(&child_id)
+            && curve_node_ids.contains(&parent_id)
+            && !curve_to_cn.contains_key(&child_id)
+        {
+            let count = curve_to_cn
+                .values()
+                .filter(|(cn, _)| *cn == parent_id)
+                .count();
+            if count < 3 {
+                curve_to_cn.insert(child_id, (parent_id, count as u8));
             }
         }
     }
@@ -580,10 +581,9 @@ fn parse_animation_curve(node: &FbxNode) -> Option<(i64, FbxCurve)> {
         .and_then(|p| {
             if let Some(f32s) = p.as_f32_array() {
                 Some(f32s.to_vec())
-            } else if let Some(f64s) = p.as_f64_array() {
-                Some(f64s.iter().map(|&v| v as f32).collect())
             } else {
-                None
+                p.as_f64_array()
+                    .map(|f64s| f64s.iter().map(|&v| v as f32).collect())
             }
         })
         .unwrap_or_default();
@@ -729,7 +729,7 @@ fn extract_stack_name(node: &FbxNode) -> String {
         .properties
         .get(1)
         .and_then(|p| p.as_string())
-        .map(|s| clean_fbx_name(s))
+        .map(clean_fbx_name)
     {
         if !name.is_empty() {
             return name;
@@ -1144,7 +1144,7 @@ mod tests {
                     .properties
                     .get(1)
                     .and_then(|p| p.as_string())
-                    .map(|s| clean_fbx_name(s))
+                    .map(clean_fbx_name)
                     .unwrap_or_default();
                 eprintln!("  '{}'", name);
             }

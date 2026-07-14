@@ -1,4 +1,4 @@
-//! 插值系统 - 复刻 mdanceio 实现
+//! 负责动画关键帧的插值计算。
 
 use crate::animation::bezier_curve::{BezierCurveFactory, Curve};
 use glam::Vec3;
@@ -130,25 +130,12 @@ impl KeyframeInterpolationPoint {
 /// 骨骼关键帧插值
 ///
 /// 包含平移的 X/Y/Z 分量和旋转的独立插值参数
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BoneKeyframeInterpolation {
     /// 平移插值 (X, Y, Z)
     pub translation: [KeyframeInterpolationPoint; 3],
     /// 旋转插值
     pub orientation: KeyframeInterpolationPoint,
-}
-
-impl Default for BoneKeyframeInterpolation {
-    fn default() -> Self {
-        Self {
-            translation: [
-                KeyframeInterpolationPoint::default(),
-                KeyframeInterpolationPoint::default(),
-                KeyframeInterpolationPoint::default(),
-            ],
-            orientation: KeyframeInterpolationPoint::default(),
-        }
-    }
 }
 
 impl BoneKeyframeInterpolation {

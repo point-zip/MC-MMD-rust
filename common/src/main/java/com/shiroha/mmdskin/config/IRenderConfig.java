@@ -2,17 +2,11 @@
 package com.shiroha.mmdskin.config;
 
 public interface IRenderConfig {
-    boolean isOpenGLLightingEnabled();
+    boolean isLightingEnabled();
+
+    default boolean isGpuSkinningEnabled() { return true; }
 
     int getModelPoolMaxCount();
-
-    boolean isMMDShaderEnabled();
-
-    default boolean isGpuSkinningEnabled() { return false; }
-
-    default boolean isGpuMorphEnabled() { return false; }
-
-    default int getMaxBones() { return 2048; }
 
     default boolean isPerformanceProfilingEnabled() { return false; }
 

@@ -1,3 +1,5 @@
+//! 负责维护 VR 演示的 Vulkan/OpenXR 资源、渲染提交与同步。
+
 use std::ffi::CString;
 use std::mem::size_of;
 use std::ptr::copy_nonoverlapping;
@@ -232,7 +234,10 @@ impl VulkanRenderer {
                 .instance()
                 .create_vulkan_instance(
                     bootstrap.system(),
-                    std::mem::transmute(entry.static_fn().get_instance_proc_addr),
+                    std::mem::transmute::<
+                        vk::PFN_vkGetInstanceProcAddr,
+                        xr::sys::platform::VkGetInstanceProcAddr,
+                    >(entry.static_fn().get_instance_proc_addr),
                     &create_info as *const _ as *const _,
                 )
                 .context("OpenXR 创建 Vulkan Instance 失败")?
@@ -286,7 +291,10 @@ impl VulkanRenderer {
                 .instance()
                 .create_vulkan_device(
                     bootstrap.system(),
-                    std::mem::transmute(entry.static_fn().get_instance_proc_addr),
+                    std::mem::transmute::<
+                        vk::PFN_vkGetInstanceProcAddr,
+                        xr::sys::platform::VkGetInstanceProcAddr,
+                    >(entry.static_fn().get_instance_proc_addr),
                     physical_device.as_raw() as _,
                     &device_info as *const _ as *const _,
                 )
@@ -730,6 +738,10 @@ impl VulkanRenderer {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "镜面提交需要同时携带模型、房间与相机帧数据，均为无分配借用或小矩阵"
+    )]
     pub fn render_mirror_only(
         &mut self,
         window: &Window,
@@ -758,6 +770,10 @@ impl VulkanRenderer {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "XR 与镜面必须共享同一帧的模型、房间及双相机数据"
+    )]
     pub fn render_xr_and_mirror(
         &mut self,
         window: &Window,
@@ -808,6 +824,10 @@ impl VulkanRenderer {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "内部提交统一承载可选 XR 与桌面镜面帧数据，避免热路径临时聚合分配"
+    )]
     fn render_internal(
         &mut self,
         window: &Window,
@@ -953,14 +973,14 @@ impl VulkanRenderer {
                 )
             };
 
-            for eye in 0..2usize {
+            for (eye, framebuffer) in xr_framebuffers.iter().copied().enumerate() {
                 let xr_view_proj = projection_from_fov(frame.views[eye].fov, XR_NEAR, XR_FAR)
                     * view_from_pose_in_space(xr_room_matrix, frame.views[eye].pose);
                 let mvp = xr_view_proj * xr_model_matrix;
                 self.record_scene_pass(
                     command_buffer,
                     xr_pipeline,
-                    xr_framebuffers[eye],
+                    framebuffer,
                     xr_extent,
                     assets,
                     data,
@@ -1083,6 +1103,10 @@ impl VulkanRenderer {
         ])
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "单个 Vulkan pass 需要完整目标、网格、矩阵与视口状态"
+    )]
     fn record_scene_pass(
         &self,
         command_buffer: vk::CommandBuffer,
@@ -2546,6 +2570,10 @@ fn view_from_pose_in_space(space_transform: Mat4, pose: xr::Posef) -> Mat4 {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::items_after_test_module,
+    reason = "测试紧邻其纯数学目标函数，后续 Vulkan 资源函数与测试无共享状态"
+)]
 mod tests {
     use super::*;
 

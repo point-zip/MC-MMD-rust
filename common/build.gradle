@@ -1,3 +1,4 @@
+// 负责公共模块的跨加载器依赖、映射与测试配置。
 architectury {
     common("fabric", "neoforge")
 }

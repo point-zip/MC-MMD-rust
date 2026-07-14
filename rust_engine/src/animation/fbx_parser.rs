@@ -1,4 +1,4 @@
-//! FBX 二进制格式解析器
+//! 负责解析 FBX 二进制节点与属性。
 
 use crate::{MmdError, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -112,11 +112,8 @@ pub fn parse_fbx<R: Read + Seek>(reader: &mut R) -> Result<Vec<FbxNode>> {
     let use_64bit = version >= 7500;
 
     let mut nodes = Vec::new();
-    loop {
-        match parse_node(reader, use_64bit)? {
-            Some(node) => nodes.push(node),
-            None => break,
-        }
+    while let Some(node) = parse_node(reader, use_64bit)? {
+        nodes.push(node);
     }
     Ok(nodes)
 }
@@ -136,7 +133,7 @@ fn parse_node<R: Read + Seek>(reader: &mut R, use_64bit: bool) -> Result<Option<
         let nl = reader
             .read_u8()
             .map_err(|e| MmdError::FbxParse(format!("读取节点头失败: {}", e)))?;
-        (end as u64, num as u32, pll as u64, nl)
+        (end, num as u32, pll, nl)
     } else {
         let end = reader
             .read_u32::<LittleEndian>()

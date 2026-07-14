@@ -22,24 +22,25 @@ public final class MorphSyncHelper {
             return;
         }
 
-        PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player);
-        if (resolved == null) {
-            return;
-        }
-
-        ExpressionSelection selection = ExpressionSelectionCodec.decode(morphName);
-        if (selection.type() == ExpressionSelection.Type.FILE) {
-            String filePath = findVpdFile(selection.value(), resolved.model().getModelName());
-            if (filePath == null) {
-                LOGGER.warn("[MorphSync] Local VPD file not found: {}", selection.value());
+        try (PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player)) {
+            if (resolved == null) {
                 return;
             }
-            selection = ExpressionSelection.file(filePath);
+
+            ExpressionSelection selection = ExpressionSelectionCodec.decode(morphName);
+            if (selection.type() == ExpressionSelection.Type.FILE) {
+                String filePath = findVpdFile(selection.value(), resolved.model().modelName());
+                if (filePath == null) {
+                    LOGGER.warn("[MorphSync] Local VPD file not found: {}", selection.value());
+                    return;
+                }
+                selection = ExpressionSelection.file(filePath);
+            }
+            ExpressionApplicationService.apply(
+                    resolved.model().handle(),
+                    selection,
+                    resolved.playerName());
         }
-        ExpressionApplicationService.apply(
-                resolved.model().model.getModelHandle(),
-                selection,
-                resolved.playerName());
     }
 
     private static String findVpdFile(String morphName, String modelName) {

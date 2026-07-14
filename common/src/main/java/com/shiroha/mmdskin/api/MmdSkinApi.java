@@ -5,7 +5,7 @@ import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
 import com.shiroha.mmdskin.bridge.runtime.NativeModelQueryPort;
 import com.shiroha.mmdskin.config.ConfigManager;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
-import com.shiroha.mmdskin.renderer.integration.entity.MobReplacementService;
+import com.shiroha.mmdskin.client.entity.MobReplacementResolver;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
@@ -48,15 +48,15 @@ public final class MmdSkinApi {
         }
 
         @Override
-        public void applyVrTrackingInput(long modelHandle, float[] trackingData) {
+        public void setEyeTrackingEnabled(long modelHandle, boolean enabled) {
         }
 
         @Override
-        public void setVrEnabled(long modelHandle, boolean enabled) {
+        public void setEyeMaxAngle(long modelHandle, float maxAngle) {
         }
 
         @Override
-        public void setVrIkParams(long modelHandle, float armIkStrength) {
+        public void setAutoBlinkEnabled(long modelHandle, boolean enabled) {
         }
 
         @Override
@@ -89,8 +89,15 @@ public final class MmdSkinApi {
     }
 
     public static ModelInfo getModelInfo(Player player) {
-        long handle = resolveModelHandle(player);
-        return readModelInfo(handle, modelQueryPort);
+        if (player == null) {
+            return null;
+        }
+        try (PlayerModelResolver.Result result = PlayerModelResolver.resolve(player)) {
+            return result == null ? null : readModelInfo(result.model().handle(), modelQueryPort);
+        } catch (Exception exception) {
+            LOGGER.debug("getModelInfo 无法获取模型租约", exception);
+            return null;
+        }
     }
 
     static ModelInfo readModelInfo(long handle, NativeModelQueryPort queryPort) {
@@ -111,8 +118,15 @@ public final class MmdSkinApi {
     }
 
     public static float[] getUV(Player player) {
-        long handle = resolveModelHandle(player);
-        return readRealtimeUvs(handle, modelQueryPort);
+        if (player == null) {
+            return null;
+        }
+        try (PlayerModelResolver.Result result = PlayerModelResolver.resolve(player)) {
+            return result == null ? null : readRealtimeUvs(result.model().handle(), modelQueryPort);
+        } catch (Exception exception) {
+            LOGGER.debug("getUV 无法获取模型租约", exception);
+            return null;
+        }
     }
 
     static float[] readRealtimeUvs(long handle, NativeModelQueryPort queryPort) {
@@ -140,7 +154,7 @@ public final class MmdSkinApi {
     }
 
     public static String getMobModelReplacement(LivingEntity entity) {
-        return MobReplacementService.getReplacementModelName(entity);
+        return MobReplacementResolver.getReplacementModelName(entity);
     }
 
     public static String getConfiguredMobModelReplacement(String entityTypeId) {
@@ -150,20 +164,6 @@ public final class MmdSkinApi {
     public static String getConfiguredMobModelReplacement(net.minecraft.world.entity.EntityType<?> entityType) {
         ResourceLocation id = BuiltInRegistries.ENTITY_TYPE.getKey(entityType);
         return id == null ? "" : ConfigManager.getMobModelReplacement(id.toString());
-    }
-
-    private static long resolveModelHandle(Player player) {
-        if (player == null) return 0;
-        try {
-            PlayerModelResolver.Result result = PlayerModelResolver.resolve(player);
-            if (result == null || result.model() == null || result.model().model == null) {
-                return 0;
-            }
-            return result.model().model.getModelHandle();
-        } catch (Exception e) {
-            LOGGER.debug("resolveModelHandle 异常", e);
-            return 0;
-        }
     }
 
     private static float[] readBonePositions(long handle, int boneCount, NativeModelQueryPort queryPort) {

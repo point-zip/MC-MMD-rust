@@ -11,28 +11,16 @@ public final class ConfigManager {
         provider = configProvider;
     }
 
-    public static boolean isOpenGLLightingEnabled() {
-        return provider != null ? provider.isOpenGLLightingEnabled() : true;
+    public static boolean isLightingEnabled() {
+        return provider != null ? provider.isLightingEnabled() : true;
+    }
+
+    public static boolean isGpuSkinningEnabled() {
+        return provider != null ? provider.isGpuSkinningEnabled() : true;
     }
 
     public static int getModelPoolMaxCount() {
         return provider != null ? provider.getModelPoolMaxCount() : 20;
-    }
-
-    public static boolean isMMDShaderEnabled() {
-        return provider != null ? provider.isMMDShaderEnabled() : false;
-    }
-
-    public static boolean isGpuSkinningEnabled() {
-        return provider != null ? provider.isGpuSkinningEnabled() : false;
-    }
-
-    public static boolean isGpuMorphEnabled() {
-        return provider != null ? provider.isGpuMorphEnabled() : false;
-    }
-
-    public static int getMaxBones() {
-        return provider != null ? provider.getMaxBones() : 2048;
     }
 
     public static boolean isPerformanceProfilingEnabled() {

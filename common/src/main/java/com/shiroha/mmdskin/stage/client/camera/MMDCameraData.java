@@ -1,6 +1,8 @@
+// 文件职责：读取并缓存 native 舞台相机轨的当前帧数据。
 package com.shiroha.mmdskin.stage.client.camera;
 
-import com.shiroha.mmdskin.NativeFunc;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
+import com.shiroha.mmdskin.bridge.runtime.NativeStagePort;
 import org.joml.Vector3f;
 
 import java.nio.ByteBuffer;
@@ -8,6 +10,7 @@ import java.nio.ByteOrder;
 
 /** 负责读取并缓存 JNI 返回的 MMD 相机帧数据。 */
 public class MMDCameraData {
+    private final NativeStagePort stagePort;
 
     private final ByteBuffer buffer;
 
@@ -19,6 +22,11 @@ public class MMDCameraData {
     private long animHandle;
     
     public MMDCameraData() {
+        this(NativePortAdapters.stage());
+    }
+
+    MMDCameraData(NativeStagePort stagePort) {
+        this.stagePort = stagePort;
         this.buffer = ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder());
     }
     
@@ -29,7 +37,7 @@ public class MMDCameraData {
     public void update(float frame) {
         if (animHandle == 0) return;
         
-        NativeFunc.GetInst().GetCameraTransform(animHandle, frame, buffer);
+        stagePort.copyCameraTransform(animHandle, frame, buffer);
         
         buffer.rewind();
         float px = buffer.getFloat();

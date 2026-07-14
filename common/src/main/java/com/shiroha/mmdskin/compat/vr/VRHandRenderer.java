@@ -1,3 +1,4 @@
+// 负责在 VR 控制器姿态下提交当前手持物品。
 package com.shiroha.mmdskin.compat.vr;
 
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -35,11 +36,14 @@ public final class VRHandRenderer {
                     : ItemDisplayContext.FIRST_PERSON_LEFT_HAND;
 
             poseStack.pushPose();
-            Minecraft.getInstance().getItemRenderer().renderStatic(
-                    player, itemStack, ctx, !isMainHand,
-                    poseStack, buffer, player.level(),
-                    packedLight, OverlayTexture.NO_OVERLAY, 0);
-            poseStack.popPose();
+            try {
+                Minecraft.getInstance().getItemRenderer().renderStatic(
+                        player, itemStack, ctx,
+                        poseStack, buffer, player.level(),
+                        packedLight, OverlayTexture.NO_OVERLAY, 0);
+            } finally {
+                poseStack.popPose();
+            }
         } catch (Exception e) {
             LOGGER.debug("VR 手持物品渲染异常", e);
         }

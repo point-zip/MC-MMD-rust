@@ -2,11 +2,11 @@
 package com.shiroha.mmdskin.neoforge.register;
 
 import com.shiroha.mmdskin.bonesync.BoneSyncManager;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
 import com.shiroha.mmdskin.config.UIConstants;
 import com.shiroha.mmdskin.debug.client.PerformanceHud;
 import com.shiroha.mmdskin.neoforge.network.MmdSkinNetworkPack;
 import com.shiroha.mmdskin.player.runtime.MmdSkinRendererPlayerHelper;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.stage.application.StageSessionService;
 import com.shiroha.mmdskin.stage.client.camera.MMDCameraController;
 import com.shiroha.mmdskin.stage.client.sync.StageAnimSyncHelper;
@@ -44,7 +44,7 @@ final class NeoForgeClientRuntimeHooks {
             return;
         }
 
-        MMDModelManager.tick();
+        MmdClientRenderRuntime.current().tick();
         StageAnimSyncHelper.tickPending();
         BoneSyncManager.tickLocal();
 
@@ -86,6 +86,7 @@ final class NeoForgeClientRuntimeHooks {
     @SubscribeEvent
     public void onPlayerLoggedOut(ClientPlayerNetworkEvent.LoggingOut event) {
         MMDCameraController.getInstance().exitStageMode();
+        MmdClientRenderRuntime.current().firstPerson().reset();
         PlayerModelSyncManager.onDisconnect();
         MmdSkinRendererPlayerHelper.onDisconnect();
         BoneSyncManager.onDisconnect();

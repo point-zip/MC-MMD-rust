@@ -2,7 +2,7 @@
 package com.shiroha.mmdskin.mixin.fabric;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.shiroha.mmdskin.player.runtime.FirstPersonManager;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
 import com.shiroha.mmdskin.stage.client.camera.MMDCameraController;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -38,7 +38,12 @@ public abstract class GameRendererMixin {
     private void mmdskin$adjustPickResult(float partialTick, CallbackInfo ci) {
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
-        if (player == null || mc.level == null || !FirstPersonManager.shouldUseVanillaReachValidation(player)) {
+        var runtime = MmdClientRenderRuntime.currentIfInstalled().orElse(null);
+        if (player == null || mc.level == null || runtime == null) {
+            return;
+        }
+        var firstPersonCamera = runtime.firstPerson().camera();
+        if (!firstPersonCamera.shouldValidateVanillaReach(player)) {
             return;
         }
 
@@ -48,7 +53,7 @@ public abstract class GameRendererMixin {
             return;
         }
 
-        Vec3 vanillaEyePos = FirstPersonManager.getVanillaEyePosition(player, partialTick);
+        Vec3 vanillaEyePos = firstPersonCamera.vanillaEyePosition(player, partialTick);
         double blockRange = player.blockInteractionRange();
         double entityRange = player.entityInteractionRange();
         HitResult missHit = player.pick(0.0D, partialTick, false);

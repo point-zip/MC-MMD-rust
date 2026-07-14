@@ -1,17 +1,12 @@
 /* 文件职责：提供轮盘界面的共享几何绘制、动画与基础交互。 */
 package com.shiroha.mmdskin.ui.wheel;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.shiroha.mmdskin.ui.chrome.TranslucentTrayChrome;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.CoreShaders;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
@@ -160,39 +155,13 @@ public abstract class AbstractWheelScreen extends Screen {
             return;
         }
 
-        Matrix4f matrix = guiGraphics.pose().last().pose();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(CoreShaders.POSITION_COLOR);
-
         double segmentAngle = 360.0 / count;
-        drawFilledSegment(matrix, selectedSlot, segmentAngle, style.highlightColor());
-
-        RenderSystem.disableBlend();
+        drawFilledSegment(guiGraphics, selectedSlot, segmentAngle, style.highlightColor());
     }
 
-    protected void drawFilledSegment(Matrix4f matrix, int index, double segmentAngle, int color) {
-        double startAngle = Math.toRadians(index * segmentAngle - 90.0);
-        double endAngle = Math.toRadians((index + 1) * segmentAngle - 90.0);
-
-        int red = red(color);
-        int green = green(color);
-        int blue = blue(color);
-        int alpha = alpha(color);
-
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_STRIP, DefaultVertexFormat.POSITION_COLOR);
-        int steps = 32;
-        for (int i = 0; i <= steps; i++) {
-            double angle = startAngle + (endAngle - startAngle) * i / steps;
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-
-            bufferBuilder.addVertex(matrix, centerX + cos * innerRadius, centerY + sin * innerRadius, 0.0f)
-                    .setColor(red, green, blue, alpha / 2);
-            bufferBuilder.addVertex(matrix, centerX + cos * outerRadius, centerY + sin * outerRadius, 0.0f)
-                    .setColor(red, green, blue, alpha);
-        }
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
+    protected void drawFilledSegment(GuiGraphics guiGraphics, int index, double segmentAngle, int color) {
+        drawRing(guiGraphics, centerX, centerY, innerRadius, outerRadius,
+                (float) (index * segmentAngle - 90.0), (float) segmentAngle, color);
     }
 
     protected void renderDividerLines(GuiGraphics guiGraphics) {
@@ -200,11 +169,6 @@ public abstract class AbstractWheelScreen extends Screen {
         if (count <= 0) {
             return;
         }
-
-        Matrix4f matrix = guiGraphics.pose().last().pose();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(CoreShaders.POSITION_COLOR);
 
         double segmentAngle = 360.0 / count;
         for (int i = 0; i < count; i++) {
@@ -220,85 +184,21 @@ public abstract class AbstractWheelScreen extends Screen {
             int lineColor = i == selectedSlot || i == (selectedSlot + 1) % count
                     ? style.lineColor()
                     : style.lineColorDim();
-            drawThickLine(matrix, innerX, innerY, outerX, outerY, 3.0f, lineColor);
+            drawThickLine(guiGraphics, innerX, innerY, outerX, outerY, 3.0f, lineColor);
         }
-
-        RenderSystem.disableBlend();
     }
 
     protected void renderOuterRing(GuiGraphics guiGraphics) {
-        Matrix4f matrix = guiGraphics.pose().last().pose();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(CoreShaders.POSITION_COLOR);
-
-        int red = red(style.lineColorDim());
-        int green = green(style.lineColorDim());
-        int blue = blue(style.lineColorDim());
-        int alpha = alpha(style.lineColorDim());
         float thickness = 3.0f;
-
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_STRIP, DefaultVertexFormat.POSITION_COLOR);
-        int steps = 64;
-        for (int i = 0; i <= steps; i++) {
-            double angle = Math.toRadians(i * 360.0 / steps);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-
-            bufferBuilder.addVertex(matrix, centerX + cos * (outerRadius - thickness), centerY + sin * (outerRadius - thickness), 0.0f)
-                    .setColor(red, green, blue, alpha);
-            bufferBuilder.addVertex(matrix, centerX + cos * (outerRadius + thickness), centerY + sin * (outerRadius + thickness), 0.0f)
-                    .setColor(red, green, blue, alpha);
-        }
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
-        RenderSystem.disableBlend();
+        drawRing(guiGraphics, centerX, centerY, outerRadius - thickness, outerRadius + thickness,
+                0.0F, 360.0F, style.lineColorDim());
     }
 
     protected void renderCenterCircle(GuiGraphics guiGraphics, String text, int textColor) {
-        Matrix4f matrix = guiGraphics.pose().last().pose();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(CoreShaders.POSITION_COLOR);
-
-        int bgRed = red(style.centerBg());
-        int bgGreen = green(style.centerBg());
-        int bgBlue = blue(style.centerBg());
-        int bgAlpha = alpha(style.centerBg());
-
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_FAN, DefaultVertexFormat.POSITION_COLOR);
-        bufferBuilder.addVertex(matrix, centerX, centerY, 0.0f).setColor(bgRed, bgGreen, bgBlue, bgAlpha);
-        int steps = 48;
-        for (int i = 0; i <= steps; i++) {
-            double angle = Math.toRadians(i * 360.0 / steps);
-            bufferBuilder.addVertex(
-                            matrix,
-                            centerX + (float) (Math.cos(angle) * innerRadius),
-                            centerY + (float) (Math.sin(angle) * innerRadius),
-                            0.0f
-                    )
-                    .setColor(bgRed, bgGreen, bgBlue, bgAlpha);
-        }
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
-
-        int borderRed = red(style.centerBorder());
-        int borderGreen = green(style.centerBorder());
-        int borderBlue = blue(style.centerBorder());
-        int borderAlpha = alpha(style.centerBorder());
+        drawDisk(guiGraphics, centerX, centerY, innerRadius, style.centerBg());
         float thickness = 3.0f;
-
-        bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_STRIP, DefaultVertexFormat.POSITION_COLOR);
-        for (int i = 0; i <= steps; i++) {
-            double angle = Math.toRadians(i * 360.0 / steps);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-
-            bufferBuilder.addVertex(matrix, centerX + cos * (innerRadius - thickness), centerY + sin * (innerRadius - thickness), 0.0f)
-                    .setColor(borderRed, borderGreen, borderBlue, borderAlpha);
-            bufferBuilder.addVertex(matrix, centerX + cos * (innerRadius + thickness), centerY + sin * (innerRadius + thickness), 0.0f)
-                    .setColor(borderRed, borderGreen, borderBlue, borderAlpha);
-        }
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
-        RenderSystem.disableBlend();
+        drawRing(guiGraphics, centerX, centerY, innerRadius - thickness, innerRadius + thickness,
+                0.0F, 360.0F, style.centerBorder());
 
         String fittedText = fitText(text, Math.max(24, innerRadius * 2 - 12));
         int textWidth = this.font.width(fittedText);
@@ -318,7 +218,7 @@ public abstract class AbstractWheelScreen extends Screen {
         return value.length() < (text == null ? 0 : text.length()) ? value + ".." : value;
     }
 
-    protected void drawThickLine(Matrix4f matrix, float x1, float y1, float x2, float y2, float thickness, int color) {
+    protected void drawThickLine(GuiGraphics guiGraphics, float x1, float y1, float x2, float y2, float thickness, int color) {
         float dx = x2 - x1;
         float dy = y2 - y1;
         float length = (float) Math.sqrt(dx * dx + dy * dy);
@@ -328,17 +228,12 @@ public abstract class AbstractWheelScreen extends Screen {
 
         float px = -dy / length * thickness * 0.5f;
         float py = dx / length * thickness * 0.5f;
-        int red = red(color);
-        int green = green(color);
-        int blue = blue(color);
-        int alpha = alpha(color);
-
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_STRIP, DefaultVertexFormat.POSITION_COLOR);
-        bufferBuilder.addVertex(matrix, x1 + px, y1 + py, 0.0f).setColor(red, green, blue, alpha);
-        bufferBuilder.addVertex(matrix, x1 - px, y1 - py, 0.0f).setColor(red, green, blue, alpha);
-        bufferBuilder.addVertex(matrix, x2 + px, y2 + py, 0.0f).setColor(red, green, blue, alpha);
-        bufferBuilder.addVertex(matrix, x2 - px, y2 - py, 0.0f).setColor(red, green, blue, alpha);
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
+        drawQuad(guiGraphics,
+                x1 + px, y1 + py,
+                x1 - px, y1 - py,
+                x2 - px, y2 - py,
+                x2 + px, y2 + py,
+                color);
     }
 
     protected void drawRectOutline(GuiGraphics guiGraphics, int x, int y, int width, int height, int color) {
@@ -558,20 +453,35 @@ public abstract class AbstractWheelScreen extends Screen {
         int segments = Math.max(12, Math.round(Math.abs(sweepDegrees) / 5.5f));
         float startRadians = (float) Math.toRadians(startDegrees);
         float stepRadians = (float) Math.toRadians(sweepDegrees / segments);
-
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(CoreShaders.POSITION_COLOR);
         Matrix4f matrix = guiGraphics.pose().last().pose();
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_STRIP, DefaultVertexFormat.POSITION_COLOR);
-        for (int i = 0; i <= segments; i++) {
-            float angle = startRadians + stepRadians * i;
-            float cos = Mth.cos(angle);
-            float sin = Mth.sin(angle);
-            addVertex(bufferBuilder, matrix, cx + cos * outer, cy + sin * outer, color);
-            addVertex(bufferBuilder, matrix, cx + cos * inner, cy + sin * inner, color);
-        }
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
+        guiGraphics.drawSpecial(source -> {
+            VertexConsumer vertices = source.getBuffer(RenderType.gui());
+            float previousAngle = startRadians;
+            for (int i = 1; i <= segments; i++) {
+                float nextAngle = startRadians + stepRadians * i;
+                addVertex(vertices, matrix, cx + Mth.cos(previousAngle) * outer, cy + Mth.sin(previousAngle) * outer, color);
+                addVertex(vertices, matrix, cx + Mth.cos(previousAngle) * inner, cy + Mth.sin(previousAngle) * inner, color);
+                addVertex(vertices, matrix, cx + Mth.cos(nextAngle) * inner, cy + Mth.sin(nextAngle) * inner, color);
+                addVertex(vertices, matrix, cx + Mth.cos(nextAngle) * outer, cy + Mth.sin(nextAngle) * outer, color);
+                previousAngle = nextAngle;
+            }
+        });
+    }
+
+    private void drawDisk(GuiGraphics guiGraphics, float cx, float cy, float radius, int color) {
+        int segments = 48;
+        Matrix4f matrix = guiGraphics.pose().last().pose();
+        guiGraphics.drawSpecial(source -> {
+            VertexConsumer vertices = source.getBuffer(RenderType.gui());
+            for (int i = 0; i < segments; i++) {
+                float angle = (float) (Math.PI * 2.0 * i / segments);
+                float nextAngle = (float) (Math.PI * 2.0 * (i + 1) / segments);
+                addVertex(vertices, matrix, cx, cy, color);
+                addVertex(vertices, matrix, cx + Mth.cos(angle) * radius, cy + Mth.sin(angle) * radius, color);
+                addVertex(vertices, matrix, cx + Mth.cos(nextAngle) * radius, cy + Mth.sin(nextAngle) * radius, color);
+                addVertex(vertices, matrix, cx + Mth.cos(nextAngle) * radius, cy + Mth.sin(nextAngle) * radius, color);
+            }
+        });
     }
 
     private void drawQuad(
@@ -586,20 +496,18 @@ public abstract class AbstractWheelScreen extends Screen {
             float dy,
             int color
     ) {
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(CoreShaders.POSITION_COLOR);
         Matrix4f matrix = guiGraphics.pose().last().pose();
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
-        addVertex(bufferBuilder, matrix, ax, ay, color);
-        addVertex(bufferBuilder, matrix, bx, by, color);
-        addVertex(bufferBuilder, matrix, cx, cy, color);
-        addVertex(bufferBuilder, matrix, dx, dy, color);
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
+        guiGraphics.drawSpecial(source -> {
+            VertexConsumer vertices = source.getBuffer(RenderType.gui());
+            addVertex(vertices, matrix, ax, ay, color);
+            addVertex(vertices, matrix, bx, by, color);
+            addVertex(vertices, matrix, cx, cy, color);
+            addVertex(vertices, matrix, dx, dy, color);
+        });
     }
 
-    private void addVertex(BufferBuilder bufferBuilder, Matrix4f matrix, float x, float y, int color) {
-        bufferBuilder.addVertex(matrix, x, y, 0.0f)
+    private void addVertex(VertexConsumer vertices, Matrix4f matrix, float x, float y, int color) {
+        vertices.addVertex(matrix, x, y, 0.0f)
                 .setColor(red(color), green(color), blue(color), alpha(color));
     }
 

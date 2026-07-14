@@ -1,4 +1,4 @@
-//! VPD 文件加载器
+//! 负责解析 VPD 姿势文件。
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -42,7 +42,7 @@ pub struct VpdFile {
 impl VpdFile {
     /// 从文件路径加载 VPD
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path.as_ref()).map_err(|e| MmdError::Io(e))?;
+        let file = File::open(path.as_ref()).map_err(MmdError::Io)?;
         let reader = BufReader::new(file);
         Self::load_from_reader(reader)
     }

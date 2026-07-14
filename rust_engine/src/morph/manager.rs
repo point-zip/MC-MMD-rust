@@ -1,7 +1,7 @@
-//! Morph 管理器
+//! 负责组合并应用顶点、骨骼、材质与 UV Morph。
 //!
 //! 实现 MMD Morph 系统：Vertex / Bone / Group / Flip / Material / UV Morph。
-//! 支持 Group/Flip Morph 递归展开，并提供 GPU 蒙皮路径的有效权重计算。
+//! 支持 Group/Flip Morph 递归展开，并为 CPU 顶点更新提供有效权重。
 
 use glam::{Vec2, Vec3, Vec4};
 use std::collections::HashMap;
@@ -199,16 +199,11 @@ impl MorphManager {
             *delta = Vec2::ZERO;
         }
 
-        let active_morphs: Vec<(usize, f32)> = self
-            .morphs
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.weight.abs() > MORPH_WEIGHT_EPSILON)
-            .map(|(i, m)| (i, m.weight))
-            .collect();
-
-        for (morph_idx, weight) in active_morphs {
-            // 拆分借用：morphs 只读，material_morph_results / uv_morph_deltas 可写
+        for morph_idx in 0..self.morphs.len() {
+            let weight = self.morphs[morph_idx].weight;
+            if weight.abs() <= MORPH_WEIGHT_EPSILON {
+                continue;
+            }
             apply_single_morph(
                 &self.morphs,
                 &mut self.material_morph_results,
@@ -299,6 +294,10 @@ fn accumulate_effective_weight(
 }
 
 /// 递归应用单个 Morph（拆分字段借用避免 clone 开销）
+#[expect(
+    clippy::too_many_arguments,
+    reason = "递归 Morph 求值需要共享可变缓冲区，聚合为上下文会扩大借用范围"
+)]
 fn apply_single_morph(
     morphs: &[Morph],
     material_morph_results: &mut [MaterialMorphResult],
@@ -432,7 +431,7 @@ fn apply_bone_morph(
 
         if let Some(bone) = bone_manager.get_bone_mut(idx) {
             bone.animation_translate += translation;
-            bone.animation_rotate = bone.animation_rotate * rotation;
+            bone.animation_rotate *= rotation;
         }
     }
 }

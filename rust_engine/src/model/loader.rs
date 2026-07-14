@@ -1,4 +1,4 @@
-//! PMX 模型加载器
+//! 负责解析 PMX 模型并构建运行时数据。
 
 use std::fs::File;
 use std::io::BufReader;
@@ -20,7 +20,7 @@ use super::{MmdMaterial, MmdModel, RuntimeVertex, SubMesh, VertexWeight};
 
 /// 从 PMX 文件加载模型
 pub fn load_pmx<P: AsRef<Path>>(path: P) -> Result<MmdModel> {
-    let file = File::open(path.as_ref()).map_err(|e| MmdError::Io(e))?;
+    let file = File::open(path.as_ref()).map_err(MmdError::Io)?;
     let mut reader = BufReader::new(file);
 
     // 获取模型所在目录（用于组合纹理路径）

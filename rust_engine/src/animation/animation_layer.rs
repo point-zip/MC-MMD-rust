@@ -1,4 +1,4 @@
-//! 动画层系统 - 复刻 mdanceio 实现
+//! 负责多层动画的播放、混合与过渡。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -301,7 +301,7 @@ impl AnimationLayer {
 
                 if self.current_frame > max_frame {
                     if self.config.loop_playback {
-                        self.current_frame = self.current_frame % max_frame;
+                        self.current_frame %= max_frame;
                     } else {
                         self.current_frame = max_frame;
                         self.state = AnimationLayerState::Stopped;

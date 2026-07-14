@@ -4,8 +4,8 @@ package com.shiroha.mmdskin.fabric.register;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.shiroha.mmdskin.fabric.config.ModConfigScreen;
 import com.shiroha.mmdskin.fabric.network.MmdSkinNetworkPack;
+import com.shiroha.mmdskin.client.entity.LegacyEntityMmdRenderer;
 import com.shiroha.mmdskin.mixin.fabric.KeyMappingAccessor;
-import com.shiroha.mmdskin.renderer.integration.entity.MmdSkinRenderFactory;
 import com.shiroha.mmdskin.ui.wheel.ConfigWheelScreen;
 import com.shiroha.mmdskin.util.KeyMappingUtil;
 import java.io.File;
@@ -91,7 +91,8 @@ public final class MmdSkinRegisterClient {
 
             String entityTypeId = name.replace('.', ':');
             EntityType.byString(entityTypeId).ifPresentOrElse(
-                entityType -> EntityRendererRegistry.register(entityType, new MmdSkinRenderFactory<>(entityTypeId)),
+                entityType -> EntityRendererRegistry.register(entityType,
+                        context -> new LegacyEntityMmdRenderer<>(context, name)),
                 () -> LOGGER.warn("{} 实体不存在，跳过渲染注册", entityTypeId)
             );
         }

@@ -1,5 +1,9 @@
-//! 顶点蒙皮计算
+//! 负责导出 CPU 顶点蒙皮计算接口。
 
+#[expect(
+    clippy::module_inception,
+    reason = "该文件实现核心蒙皮算法，模块名保持公开领域术语"
+)]
 mod skinning;
 
 pub use skinning::{compute_skinning, SkinningContext};

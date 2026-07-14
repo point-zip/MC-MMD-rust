@@ -105,6 +105,11 @@ KAIMyEntitySaba/
 rust_engine/deps/mdanceio/
 /bullet3/
 /docs
+!/docs/
+/docs/*
+!/docs/adr/
+!/docs/adr/**
+!/docs/compatibility.md
 **/natives
 CLAUDE.md
 /rust_engine/deps

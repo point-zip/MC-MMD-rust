@@ -1,3 +1,4 @@
+// 负责向第一人称与玩家渲染模块暴露最小化 VR 运行时能力。
 package com.shiroha.mmdskin.player.port;
 
 import net.minecraft.world.entity.player.Player;
@@ -47,7 +48,8 @@ public interface VrRuntimePort {
         }
 
         @Override
-        public void updateModelVr(long modelHandle, Player player, float tickDelta, float armIkStrength) {
+        public void updateModelVr(long modelHandle, Player player, float tickDelta,
+                                  float armIkStrength, Vec3 modelRootOffset) {
         }
     };
 
@@ -71,5 +73,6 @@ public interface VrRuntimePort {
 
     void setModelVrEnabled(long modelHandle, boolean enabled);
 
-    void updateModelVr(long modelHandle, Player player, float tickDelta, float armIkStrength);
+    void updateModelVr(long modelHandle, Player player, float tickDelta,
+                       float armIkStrength, Vec3 modelRootOffset);
 }

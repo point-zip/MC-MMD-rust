@@ -3,28 +3,30 @@ package com.shiroha.mmdskin.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 public class ConfigData {
+    public static final int CURRENT_SCHEMA_VERSION = 3;
     private static final Logger LOGGER = LogManager.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    public boolean openGLEnableLighting = true;
+    public int schemaVersion = CURRENT_SCHEMA_VERSION;
+    public boolean lightingEnabled = true;
+    public boolean gpuSkinningEnabled = true;
     public int modelPoolMaxCount = 20;
-    public boolean mmdShaderEnabled = false;
-
-    public boolean gpuSkinningEnabled = false;
-    public boolean gpuMorphEnabled = false;
-    public int maxBones = 2048;
     public boolean performanceProfilingEnabled = false;
     public int performanceLogIntervalSeconds = 5;
     public int maxVisibleModelsPerFrame = 10;
@@ -82,12 +84,21 @@ public class ConfigData {
         }
 
         try (Reader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
-            ConfigData config = GSON.fromJson(reader, ConfigData.class);
+            JsonElement parsed = JsonParser.parseReader(reader);
+            if (!parsed.isJsonObject()) {
+                throw new IllegalStateException("配置根节点必须是 JSON object");
+            }
+            JsonObject root = parsed.getAsJsonObject();
+            boolean migrated = migrate(root);
+            ConfigData config = GSON.fromJson(root, ConfigData.class);
             if (config == null) {
                 LOGGER.warn("配置文件为空，使用默认配置");
                 return new ConfigData();
             }
             config.normalize();
+            if (migrated) {
+                config.save(configPath);
+            }
             return config;
         } catch (Exception e) {
             LOGGER.error("配置加载失败，使用默认配置: {}", e.getMessage());
@@ -96,17 +107,28 @@ public class ConfigData {
     }
 
     public void save(Path configPath) {
+        Path temporaryFile = null;
         try {
             if (!Files.exists(configPath)) {
                 Files.createDirectories(configPath);
             }
 
             Path configFile = configPath.resolve("config.json");
-            try (Writer writer = Files.newBufferedWriter(configFile, StandardCharsets.UTF_8)) {
+            temporaryFile = Files.createTempFile(configPath, "config.json.", ".tmp");
+            try (Writer writer = Files.newBufferedWriter(temporaryFile, StandardCharsets.UTF_8)) {
                 GSON.toJson(this, writer);
             }
+            moveAtomically(temporaryFile, configFile);
         } catch (IOException e) {
-            LOGGER.error("保存配置失败: {}", e.getMessage());
+            LOGGER.error("保存配置失败", e);
+        } finally {
+            if (temporaryFile != null) {
+                try {
+                    Files.deleteIfExists(temporaryFile);
+                } catch (IOException e) {
+                    LOGGER.debug("清理配置临时文件失败: {}", temporaryFile, e);
+                }
+            }
         }
     }
 
@@ -125,6 +147,7 @@ public class ConfigData {
     }
 
     private void normalize() {
+        schemaVersion = CURRENT_SCHEMA_VERSION;
         if (mobModelReplacements == null) {
             mobModelReplacements = new LinkedHashMap<>();
         }
@@ -155,5 +178,37 @@ public class ConfigData {
 
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static boolean migrate(JsonObject root) {
+        int previousVersion = root.has("schemaVersion") ? root.get("schemaVersion").getAsInt() : 1;
+        boolean changed = previousVersion != CURRENT_SCHEMA_VERSION;
+        if (!root.has("lightingEnabled") && root.has("openGLEnableLighting")) {
+            root.add("lightingEnabled", root.get("openGLEnableLighting"));
+            changed = true;
+        }
+        changed |= root.remove("openGLEnableLighting") != null;
+        changed |= root.remove("mmdShaderEnabled") != null;
+        if (!root.has("gpuSkinningEnabled")) {
+            root.addProperty("gpuSkinningEnabled", true);
+            changed = true;
+        }
+        changed |= root.remove("gpuMorphEnabled") != null;
+        changed |= root.remove("maxBones") != null;
+        root.addProperty("schemaVersion", CURRENT_SCHEMA_VERSION);
+        return changed;
+    }
+
+    private static void moveAtomically(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException atomicFailure) {
+            try {
+                Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException fallbackFailure) {
+                fallbackFailure.addSuppressed(atomicFailure);
+                throw fallbackFailure;
+            }
+        }
     }
 }

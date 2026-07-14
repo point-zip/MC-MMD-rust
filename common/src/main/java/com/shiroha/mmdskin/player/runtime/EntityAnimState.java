@@ -1,8 +1,5 @@
+// 负责保存模型动画层的 Java 侧状态，不持有 native 资源。
 package com.shiroha.mmdskin.player.runtime;
-
-import com.shiroha.mmdskin.NativeFunc;
-
-import java.nio.ByteBuffer;
 
 public class EntityAnimState {
 
@@ -25,10 +22,7 @@ public class EntityAnimState {
 
     public boolean playCustomAnim;
     public boolean playStageAnim;
-    public long rightHandMat;
-    public long leftHandMat;
     public State[] stateLayers;
-    public ByteBuffer matBuffer;
     public AnimPhase[] layerPhases;
     public String[] layerAnimationKeys;
     public String[] layerGroupIds;
@@ -37,12 +31,8 @@ public class EntityAnimState {
     public boolean layer1BoneMaskSet;
 
     public EntityAnimState(int layerCount) {
-        NativeFunc nf = NativeFunc.GetInst();
         this.stateLayers = new State[layerCount];
         this.playCustomAnim = false;
-        this.rightHandMat = nf.CreateMat();
-        this.leftHandMat = nf.CreateMat();
-        this.matBuffer = ByteBuffer.allocateDirect(64);
         this.layerPhases = new AnimPhase[layerCount];
         this.layerAnimationKeys = new String[layerCount];
         this.layerGroupIds = new String[layerCount];
@@ -65,15 +55,7 @@ public class EntityAnimState {
     }
 
     public void dispose() {
-        NativeFunc nf = NativeFunc.GetInst();
-        if (rightHandMat != 0) {
-            nf.DeleteMat(rightHandMat);
-            rightHandMat = 0;
-        }
-        if (leftHandMat != 0) {
-            nf.DeleteMat(leftHandMat);
-            leftHandMat = 0;
-        }
+        invalidateStateLayers();
     }
 
     public static String getPropertyName(State state) {

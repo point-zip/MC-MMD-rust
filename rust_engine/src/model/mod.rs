@@ -1,5 +1,6 @@
 //! MMD 模型运行时管理
 
+mod gpu_skinning;
 mod loader;
 mod material;
 mod runtime;
@@ -13,6 +14,9 @@ mod vrm_mesh;
 mod vrm_morph;
 mod vrm_skeleton;
 
+pub(crate) use gpu_skinning::{
+    GpuSkinningDraw, GpuSkinningError, GpuSkinningTopology, IDENTITY_BONE, MAX_PALETTE_BONES,
+};
 pub use loader::load_pmx;
 pub use material::MmdMaterial;
 pub use runtime::{MmdModel, ModelVrDebugSnapshot};

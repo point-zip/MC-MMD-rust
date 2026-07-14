@@ -1,8 +1,10 @@
+// 负责把本地玩家 Model Instance 租约适配为舞台播放绑定。
 package com.shiroha.mmdskin.stage.client;
 
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
+import com.shiroha.mmdskin.client.model.ModelKey;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
 import com.shiroha.mmdskin.player.runtime.MmdSkinRendererPlayerHelper;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.stage.client.playback.port.StageLocalModelBindingPort;
 import com.shiroha.mmdskin.ui.config.ModelSelectorConfig;
 import net.minecraft.client.Minecraft;
@@ -25,16 +27,15 @@ public final class DefaultStageLocalModelBindingPort implements StageLocalModelB
             return StageLocalModelBinding.empty();
         }
 
-        MMDModelManager.Model modelData = MMDModelManager.GetModel(
-                modelName,
-                PlayerModelResolver.getCacheKey(mc.player)
-        );
-        if (modelData == null) {
+        ModelKey key = new ModelKey(modelName, PlayerModelResolver.getCacheKey(mc.player), ModelKey.Usage.ENTITY);
+        var lease = MmdClientRenderRuntime.current().acquire(key).orElse(null);
+        if (lease == null) {
             return StageLocalModelBinding.empty();
         }
-
-        long modelHandle = modelData.model.getModelHandle();
-        MmdSkinRendererPlayerHelper.startStageAnimation(modelData, mergedAnim);
-        return new StageLocalModelBinding(modelHandle, modelName);
+        try (lease) {
+            long modelHandle = lease.instance().handle();
+            MmdSkinRendererPlayerHelper.startStageAnimation(lease.instance(), mergedAnim);
+            return new StageLocalModelBinding(modelHandle, modelName);
+        }
     }
 }

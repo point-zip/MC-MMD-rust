@@ -65,10 +65,12 @@ public final class NativeLibraryLoader {
         isLinux = System.getProperty("os.name").toLowerCase().contains("linux") && !isAndroid;
     }
 
-    static final String LIBRARY_VERSION = "v1.0.5";
+    public static final String LIBRARY_VERSION = "v1.0.5";
 
     private static final String TEMP_DIR_PREFIX = "mmdskin-native-" + LIBRARY_VERSION + "-";
+    private static final Object LOAD_LOCK = new Object();
     private static final Object TEMP_DIR_LOCK = new Object();
+    private static volatile boolean loaded;
     private static volatile Path sessionTempDirectory;
 
     public static boolean isAndroid() {
@@ -78,11 +80,19 @@ public final class NativeLibraryLoader {
     private NativeLibraryLoader() {
     }
 
-    static void loadAndVerify(NativeFunc instance) {
-        for (NativeLibrarySpec library : resolveLibrariesForCurrentPlatform()) {
-            loadBundledLibrary(library);
+    public static void load() {
+        if (loaded) {
+            return;
         }
-        verifyLoadedLibraryVersion(instance);
+        synchronized (LOAD_LOCK) {
+            if (loaded) {
+                return;
+            }
+            for (NativeLibrarySpec library : resolveLibrariesForCurrentPlatform()) {
+                loadBundledLibrary(library);
+            }
+            loaded = true;
+        }
     }
 
     private static List<NativeLibrarySpec> resolveLibrariesForCurrentPlatform() {
@@ -256,19 +266,6 @@ public final class NativeLibraryLoader {
             error.initCause(cause);
         }
         return error;
-    }
-
-    private static void verifyLoadedLibraryVersion(NativeFunc instance) {
-        try {
-            String rustVersion = instance.GetVersion();
-            if (LIBRARY_VERSION.equals(rustVersion)) {
-                return;
-            }
-            logger.warn("原生库版本不匹配，Java 侧期望 " + LIBRARY_VERSION + ", Rust 侧实际 " + rustVersion);
-            logger.warn("这通常发生在开发环境或手动替换内置库文件时，请确保 Rust 引擎和 Java 模块版本一致。");
-        } catch (Exception | Error e) {
-            logger.warn("运行时版本校验失败（GetVersion 调用异常）: " + e.getMessage());
-        }
     }
 
     private record NativeLibrarySpec(String resourcePath, String fileName) {

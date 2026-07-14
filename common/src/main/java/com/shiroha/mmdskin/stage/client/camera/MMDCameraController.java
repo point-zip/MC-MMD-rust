@@ -1,11 +1,15 @@
+// 文件职责：维护舞台播放期间的相机状态并协调本地与远端相机控制。
 package com.shiroha.mmdskin.stage.client.camera;
 
-import com.shiroha.mmdskin.NativeFunc;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
+import com.shiroha.mmdskin.bridge.runtime.NativeAnimationPort;
+import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
+import com.shiroha.mmdskin.bridge.runtime.NativeStagePort;
 import com.shiroha.mmdskin.config.StageConfig;
 import com.shiroha.mmdskin.stage.client.camera.port.StageCameraBroadcastPort;
 import com.shiroha.mmdskin.stage.client.camera.port.StageCameraSessionPort;
 import com.shiroha.mmdskin.stage.client.camera.port.StageCameraUiPort;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
+import com.shiroha.mmdskin.client.model.MmdModelInstance;
 import com.shiroha.mmdskin.player.runtime.MmdSkinRendererPlayerHelper;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
 import com.shiroha.mmdskin.stage.client.sync.StageAnimSyncHelper;
@@ -24,6 +28,9 @@ import java.util.UUID;
 /** 协调舞台模式下的相机、音频与观演状态。 */
 public class MMDCameraController {
     private static final Logger logger = LogManager.getLogger();
+    private static final NativeAnimationPort ANIMATIONS = NativePortAdapters.animation();
+    private static final NativeStagePort STAGE = NativePortAdapters.stage();
+    private static final NativeModelPort MODELS = NativePortAdapters.model();
 
     private static volatile StageCameraSessionPort defaultSessionPort = new StageCameraSessionPort() {
         @Override
@@ -221,15 +228,13 @@ public class MMDCameraController {
                               long modelHandle, String modelName, String audioPath, float heightOffset) {
         if (state != StageState.STANDBY && state != StageState.INTRO) return false;
 
-        NativeFunc nf = NativeFunc.GetInst();
-
         this.motionAnimHandle = motionAnim;
 
         boolean hasCameraData = false;
-        if (cameraAnim != 0 && nf.HasCameraData(cameraAnim)) {
+        if (cameraAnim != 0 && STAGE.hasCameraData(cameraAnim)) {
             this.cameraAnimHandle = cameraAnim;
             hasCameraData = true;
-        } else if (motionAnim != 0 && nf.HasCameraData(motionAnim)) {
+        } else if (motionAnim != 0 && STAGE.hasCameraData(motionAnim)) {
             this.cameraAnimHandle = motionAnim;
             hasCameraData = true;
         } else {
@@ -238,10 +243,10 @@ public class MMDCameraController {
         }
 
         if (hasCameraData) {
-            this.maxFrame = nf.GetAnimMaxFrame(this.cameraAnimHandle);
+            this.maxFrame = STAGE.getAnimationMaxFrame(this.cameraAnimHandle);
             this.cameraData.setAnimHandle(this.cameraAnimHandle);
         } else if (motionAnim != 0) {
-            this.maxFrame = nf.GetAnimMaxFrame(motionAnim);
+            this.maxFrame = STAGE.getAnimationMaxFrame(motionAnim);
         } else {
             this.maxFrame = 0;
         }
@@ -257,8 +262,8 @@ public class MMDCameraController {
 
         this.modelHandle = modelHandle;
         if (modelHandle != 0) {
-            nf.SetAutoBlinkEnabled(modelHandle, false);
-            nf.SetEyeTrackingEnabled(modelHandle, false);
+            MODELS.setAutoBlinkEnabled(modelHandle, false);
+            MODELS.setEyeTrackingEnabled(modelHandle, false);
         }
 
         audioPlayer.setVolume(StageConfig.getInstance().audioVolume);
@@ -289,16 +294,14 @@ public class MMDCameraController {
             Minecraft.getInstance().options.hideGui = previousHideGui;
         }
 
-        NativeFunc nf = NativeFunc.GetInst();
-
         clearLocalPlayerStageFlags();
-        restoreModelState(nf);
+        restoreModelState();
 
         if (this.motionAnimHandle != 0) {
-            nf.DeleteAnimation(this.motionAnimHandle);
+            ANIMATIONS.deleteAnimation(this.motionAnimHandle);
         }
         if (this.cameraAnimHandle != 0 && this.cameraAnimHandle != this.motionAnimHandle) {
-            nf.DeleteAnimation(this.cameraAnimHandle);
+            ANIMATIONS.deleteAnimation(this.cameraAnimHandle);
         }
 
         this.cameraAnimHandle = 0;
@@ -346,15 +349,13 @@ public class MMDCameraController {
             if (cinematicMode) {
                 Minecraft.getInstance().options.hideGui = previousHideGui;
             }
-            NativeFunc nf = NativeFunc.GetInst();
-
             clearLocalPlayerStageFlags();
-            restoreModelState(nf);
+            restoreModelState();
             if (this.motionAnimHandle != 0) {
-                nf.DeleteAnimation(this.motionAnimHandle);
+                ANIMATIONS.deleteAnimation(this.motionAnimHandle);
             }
             if (this.cameraAnimHandle != 0 && this.cameraAnimHandle != this.motionAnimHandle) {
-                nf.DeleteAnimation(this.cameraAnimHandle);
+                ANIMATIONS.deleteAnimation(this.cameraAnimHandle);
             }
         }
 
@@ -623,25 +624,27 @@ public class MMDCameraController {
     private void clearLocalPlayerStageFlags() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(mc.player);
-        if (resolved != null) {
-            resolved.model().entityData.playCustomAnim = false;
-            resolved.model().entityData.playStageAnim = false;
+        try (PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(mc.player)) {
+            if (resolved != null) {
+                resolved.model().animationState().playCustomAnim = false;
+                resolved.model().animationState().playStageAnim = false;
+            }
         }
     }
 
-    private void restoreModelState(NativeFunc nf) {
+    private void restoreModelState() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(mc.player);
-        if (resolved != null) {
-            MMDModelManager.Model mwed = resolved.model();
-            long handle = mwed.model.getModelHandle();
-            if (handle != 0) {
-                nf.SetAutoBlinkEnabled(handle, true);
-                nf.SetEyeTrackingEnabled(handle, true);
+        try (PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(mc.player)) {
+            if (resolved != null) {
+                MmdModelInstance model = resolved.model();
+                long handle = model.handle();
+                if (handle != 0) {
+                    MODELS.setAutoBlinkEnabled(handle, true);
+                    MODELS.setEyeTrackingEnabled(handle, true);
+                }
+                MmdSkinRendererPlayerHelper.resetModelAnimationState(mc.player, model);
             }
-            MmdSkinRendererPlayerHelper.resetModelAnimationState(mc.player, mwed);
         }
     }
 
@@ -776,17 +779,15 @@ public class MMDCameraController {
     public void setWatchCamera(long cameraAnimHandle, float heightOffset) {
         if (state != StageState.WATCHING) return;
 
-        NativeFunc nf = NativeFunc.GetInst();
-
         if (this.watchCameraAnimHandle != 0) {
-            nf.DeleteAnimation(this.watchCameraAnimHandle);
+            ANIMATIONS.deleteAnimation(this.watchCameraAnimHandle);
         }
 
         this.watchCameraAnimHandle = cameraAnimHandle;
         this.cameraHeightOffset = heightOffset;
 
-        if (cameraAnimHandle != 0 && nf.HasCameraData(cameraAnimHandle)) {
-            this.maxFrame = nf.GetAnimMaxFrame(cameraAnimHandle);
+        if (cameraAnimHandle != 0 && STAGE.hasCameraData(cameraAnimHandle)) {
+            this.maxFrame = STAGE.getAnimationMaxFrame(cameraAnimHandle);
             this.currentFrame = 0.0f;
             this.cameraData.setAnimHandle(cameraAnimHandle);
         }
@@ -798,12 +799,11 @@ public class MMDCameraController {
         this.modelHandle = modelHandle;
         this.modelName = modelName;
         if (this.maxFrame <= 0.0f && motionAnim != 0) {
-            this.maxFrame = NativeFunc.GetInst().GetAnimMaxFrame(motionAnim);
+            this.maxFrame = STAGE.getAnimationMaxFrame(motionAnim);
         }
         if (modelHandle != 0) {
-            NativeFunc nf = NativeFunc.GetInst();
-            nf.SetAutoBlinkEnabled(modelHandle, false);
-            nf.SetEyeTrackingEnabled(modelHandle, false);
+            MODELS.setAutoBlinkEnabled(modelHandle, false);
+            MODELS.setEyeTrackingEnabled(modelHandle, false);
         }
     }
 
@@ -860,14 +860,13 @@ public class MMDCameraController {
 
         clearLocalPlayerStageFlags();
 
-        NativeFunc nf = NativeFunc.GetInst();
-        restoreModelState(nf);
+        restoreModelState();
         if (this.motionAnimHandle != 0) {
-            nf.DeleteAnimation(this.motionAnimHandle);
+            ANIMATIONS.deleteAnimation(this.motionAnimHandle);
         }
 
         if (watchCameraAnimHandle != 0) {
-            nf.DeleteAnimation(watchCameraAnimHandle);
+            ANIMATIONS.deleteAnimation(watchCameraAnimHandle);
             watchCameraAnimHandle = 0;
         }
 
@@ -904,22 +903,20 @@ public class MMDCameraController {
 
 
     private void forceCleanupForWatch() {
-        NativeFunc nf = NativeFunc.GetInst();
-
         if (state == StageState.PLAYING) {
             audioPlayer.cleanup();
             if (cinematicMode) {
                 Minecraft.getInstance().options.hideGui = previousHideGui;
             }
             clearLocalPlayerStageFlags();
-            if (this.motionAnimHandle != 0) nf.DeleteAnimation(this.motionAnimHandle);
+            if (this.motionAnimHandle != 0) ANIMATIONS.deleteAnimation(this.motionAnimHandle);
             if (this.cameraAnimHandle != 0 && this.cameraAnimHandle != this.motionAnimHandle) {
-                nf.DeleteAnimation(this.cameraAnimHandle);
+                ANIMATIONS.deleteAnimation(this.cameraAnimHandle);
             }
         }
 
         if (watchCameraAnimHandle != 0) {
-            nf.DeleteAnimation(watchCameraAnimHandle);
+            ANIMATIONS.deleteAnimation(watchCameraAnimHandle);
             watchCameraAnimHandle = 0;
         }
 

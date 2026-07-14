@@ -5,8 +5,8 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.shiroha.mmdskin.compat.vr.VRArmHider;
 import com.shiroha.mmdskin.compat.vr.VRHandRenderer;
 import com.shiroha.mmdskin.config.UIConstants;
-import com.shiroha.mmdskin.neoforge.YsmCompat;
-import com.shiroha.mmdskin.player.runtime.FirstPersonManager;
+import com.shiroha.mmdskin.neoforge.compat.YsmCompat;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
 import com.shiroha.mmdskin.ui.network.PlayerModelSyncManager;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
@@ -56,7 +56,9 @@ public abstract class ItemInHandRendererMixin {
             return;
         }
 
-        if (FirstPersonManager.shouldRenderFirstPerson() && hasMmdModel && !useVanillaModel) {
+        var runtime = MmdClientRenderRuntime.currentIfInstalled().orElse(null);
+        if (runtime != null && runtime.firstPerson().session().desktopActive()
+                && hasMmdModel && !useVanillaModel) {
             ci.cancel();
         }
     }

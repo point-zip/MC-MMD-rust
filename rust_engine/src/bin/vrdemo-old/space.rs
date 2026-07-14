@@ -1,3 +1,5 @@
+//! 负责维护 VR 演示的追踪空间、移动、传送与镜面相机状态。
+
 use glam::{Mat4, Quat, Vec2, Vec3};
 use mmd_engine::vrm_runtime::{TrackedPose as RuntimePose, VrmTrackingInput};
 
@@ -67,20 +69,11 @@ impl Default for Calibration {
     }
 }
 
+#[derive(Default)]
 pub struct SpaceState {
     calibration: Calibration,
     last_raw_tracking: TrackingFrame,
     teleport_target: TeleportTarget,
-}
-
-impl Default for SpaceState {
-    fn default() -> Self {
-        Self {
-            calibration: Calibration::default(),
-            last_raw_tracking: TrackingFrame::default(),
-            teleport_target: TeleportTarget::default(),
-        }
-    }
 }
 
 impl SpaceState {

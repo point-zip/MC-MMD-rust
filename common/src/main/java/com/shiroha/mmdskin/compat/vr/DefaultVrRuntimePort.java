@@ -1,3 +1,4 @@
+// 负责把 Vivecraft 兼容能力适配为稳定的 VR 运行时端口。
 package com.shiroha.mmdskin.compat.vr;
 
 import com.shiroha.mmdskin.player.port.VrRuntimePort;
@@ -91,10 +92,11 @@ public final class DefaultVrRuntimePort implements VrRuntimePort {
     }
 
     @Override
-    public void updateModelVr(long modelHandle, Player player, float tickDelta, float armIkStrength) {
+    public void updateModelVr(long modelHandle, Player player, float tickDelta,
+                              float armIkStrength, Vec3 modelRootOffset) {
         try {
             VRBoneDriver.setVRIKParams(modelHandle, armIkStrength);
-            VRBoneDriver.driveModel(modelHandle, player, tickDelta);
+            VRBoneDriver.driveModel(modelHandle, player, tickDelta, modelRootOffset);
         } catch (Exception e) {
             LOGGER.debug("Failed to update VR model tracking", e);
         }

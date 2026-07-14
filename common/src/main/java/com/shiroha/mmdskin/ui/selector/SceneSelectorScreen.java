@@ -3,7 +3,9 @@ package com.shiroha.mmdskin.ui.selector;
 
 import com.shiroha.mmdskin.asset.catalog.ModelInfo;
 import com.shiroha.mmdskin.scene.client.SceneModelCatalog;
-import com.shiroha.mmdskin.scene.client.SceneModelManager;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
+import com.shiroha.mmdskin.scene.client.ScenePlacement;
+import com.shiroha.mmdskin.scene.client.SceneSession;
 import com.shiroha.mmdskin.ui.chrome.TranslucentTrayChrome;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -50,8 +52,8 @@ public class SceneSelectorScreen extends Screen {
 
     public SceneSelectorScreen() {
         super(Component.translatable("gui.mmdskin.scene_selector"));
-        SceneModelManager manager = SceneModelManager.getInstance();
-        this.currentScene = manager.isActive() || manager.isLoading() ? manager.getSceneModelName() : null;
+        SceneSession scenes = MmdClientRenderRuntime.current().scenes();
+        this.currentScene = scenes.isActive() || scenes.isLoading() ? scenes.modelName() : null;
         loadAvailableScenes();
     }
 
@@ -192,8 +194,8 @@ public class SceneSelectorScreen extends Screen {
     }
 
     private void renderScreen(GuiGraphics guiGraphics) {
-        SceneModelManager manager = SceneModelManager.getInstance();
-        boolean hasScene = manager.isActive() || manager.isLoading();
+        SceneSession scenes = MmdClientRenderRuntime.current().scenes();
+        boolean hasScene = scenes.isActive() || scenes.isLoading();
         String secondaryText = hasScene
                 ? Component.translatable("gui.mmdskin.scene_selector.cancel").getString()
                 : Component.translatable("gui.mmdskin.refresh").getString();
@@ -252,9 +254,9 @@ public class SceneSelectorScreen extends Screen {
     }
 
     private void performSecondaryAction() {
-        SceneModelManager manager = SceneModelManager.getInstance();
-        if (manager.isActive() || manager.isLoading()) {
-            manager.removeScene();
+        SceneSession scenes = MmdClientRenderRuntime.current().scenes();
+        if (scenes.isActive() || scenes.isLoading()) {
+            scenes.remove();
             currentScene = null;
             loadAvailableScenes();
             return;
@@ -264,7 +266,15 @@ public class SceneSelectorScreen extends Screen {
 
     private void selectScene(SceneCardEntry card) {
         currentScene = card.displayName;
-        SceneModelManager.getInstance().placeScene(card.displayName);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player != null) {
+            MmdClientRenderRuntime.current().scenes().place(new ScenePlacement(
+                    card.displayName,
+                    minecraft.player.getX(),
+                    minecraft.player.getY(),
+                    minecraft.player.getZ(),
+                    minecraft.player.getYRot()));
+        }
         LOGGER.info("放置场景模型: {}", card.displayName);
     }
 
@@ -284,11 +294,11 @@ public class SceneSelectorScreen extends Screen {
     }
 
     private String buildStatusText() {
-        SceneModelManager manager = SceneModelManager.getInstance();
-        if (manager.isLoading()) {
+        SceneSession scenes = MmdClientRenderRuntime.current().scenes();
+        if (scenes.isLoading()) {
             return Component.translatable("gui.mmdskin.scene_selector.loading").getString();
         }
-        if (manager.isActive()) {
+        if (scenes.isActive()) {
             return Component.translatable("gui.mmdskin.scene_selector.active", shorten(currentScene, 8)).getString();
         }
         return sceneCards.size() + " " + Component.translatable("gui.mmdskin.scene_selector.models").getString();

@@ -1,9 +1,12 @@
+// 负责同步舞台动画句柄、远端模型状态与待加载重试。
 package com.shiroha.mmdskin.stage.client.sync;
 
-import com.shiroha.mmdskin.NativeFunc;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
+import com.shiroha.mmdskin.bridge.runtime.NativeAnimationPort;
+import com.shiroha.mmdskin.bridge.runtime.NativeStagePort;
+import com.shiroha.mmdskin.client.model.MmdModelInstance;
 import com.shiroha.mmdskin.config.PathConstants;
 import com.shiroha.mmdskin.stage.client.camera.MMDCameraController;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.player.runtime.MmdSkinRendererPlayerHelper;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
 import com.shiroha.mmdskin.stage.domain.model.StageDescriptor;
@@ -22,6 +25,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class StageAnimSyncHelper {
 
     private static final Logger logger = LogManager.getLogger();
+    private static final NativeAnimationPort ANIMATIONS = NativePortAdapters.animation();
+    private static final NativeStagePort STAGE = NativePortAdapters.stage();
 
     private static final Map<UUID, List<Long>> remoteStageAnims = new ConcurrentHashMap<>();
     private static final Map<UUID, Long> remoteStageModels = new ConcurrentHashMap<>();
@@ -59,9 +64,10 @@ public final class StageAnimSyncHelper {
         }
         endStageAnim(player.getUUID());
 
-        PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player);
-        if (resolved != null) {
-            MmdSkinRendererPlayerHelper.resetModelAnimationState(player, resolved.model());
+        try (PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player)) {
+            if (resolved != null) {
+                MmdSkinRendererPlayerHelper.resetModelAnimationState(player, resolved.model());
+            }
         }
     }
 
@@ -115,10 +121,9 @@ public final class StageAnimSyncHelper {
         if (remoteStageModels.isEmpty()) {
             return;
         }
-        NativeFunc nf = NativeFunc.GetInst();
         for (Long modelHandle : remoteStageModels.values()) {
             if (modelHandle != 0) {
-                nf.SeekLayer(modelHandle, 0, frame);
+                ANIMATIONS.seekLayer(modelHandle, 0, frame);
             }
         }
     }
@@ -128,13 +133,14 @@ public final class StageAnimSyncHelper {
         if (mc.player == null) {
             return;
         }
-        PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(mc.player);
-        if (resolved == null || !resolved.model().entityData.playStageAnim) {
-            return;
-        }
-        long modelHandle = resolved.model().model.getModelHandle();
-        if (modelHandle != 0) {
-            NativeFunc.GetInst().SeekLayer(modelHandle, 0, frame);
+        try (PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(mc.player)) {
+            if (resolved == null || !resolved.model().animationState().playStageAnim) {
+                return;
+            }
+            long modelHandle = resolved.model().handle();
+            if (modelHandle != 0) {
+                ANIMATIONS.seekLayer(modelHandle, 0, frame);
+            }
         }
     }
 
@@ -144,11 +150,10 @@ public final class StageAnimSyncHelper {
         if (remoteStageAnims.isEmpty()) {
             return;
         }
-        NativeFunc nf = NativeFunc.GetInst();
         for (List<Long> handles : remoteStageAnims.values()) {
             for (long handle : handles) {
                 if (handle != 0) {
-                    nf.DeleteAnimation(handle);
+                    ANIMATIONS.deleteAnimation(handle);
                 }
             }
         }
@@ -169,10 +174,9 @@ public final class StageAnimSyncHelper {
             return;
         }
 
-        MMDModelManager.Model modelData = resolved.model();
-        NativeFunc nf = NativeFunc.GetInst();
-        long modelHandle = modelData.model.getModelHandle();
-        MmdSkinRendererPlayerHelper.startStageAnimation(modelData, mergedAnim);
+        MmdModelInstance model = resolved.model();
+        long modelHandle = model.handle();
+        MmdSkinRendererPlayerHelper.startStageAnimation(model, mergedAnim);
 
         List<Long> tracked = new CopyOnWriteArrayList<>();
         tracked.add(mergedAnim);
@@ -181,8 +185,9 @@ public final class StageAnimSyncHelper {
 
         MMDCameraController controller = MMDCameraController.getInstance();
         if (controller.isActive()) {
-            nf.SeekLayer(modelHandle, 0, controller.getCurrentFrame());
+            ANIMATIONS.seekLayer(modelHandle, 0, controller.getCurrentFrame());
         }
+        resolved.close();
     }
 
     private static long loadAndMergeAnimations(File stageDir, List<String> motionFiles) {
@@ -190,11 +195,10 @@ public final class StageAnimSyncHelper {
             return 0;
         }
 
-        NativeFunc nf = NativeFunc.GetInst();
         List<Long> loadedAnims = new ArrayList<>();
 
         String firstFile = new File(stageDir, motionFiles.get(0)).getAbsolutePath();
-        long mergedAnim = nf.LoadAnimation(0, firstFile);
+        long mergedAnim = ANIMATIONS.loadAnimation(0, firstFile);
         if (mergedAnim == 0) {
             logger.warn("[舞台同步] VMD 加载失败: {}", firstFile);
             return 0;
@@ -203,15 +207,15 @@ public final class StageAnimSyncHelper {
 
         for (int i = 1; i < motionFiles.size(); i++) {
             String filePath = new File(stageDir, motionFiles.get(i)).getAbsolutePath();
-            long tempAnim = nf.LoadAnimation(0, filePath);
+            long tempAnim = ANIMATIONS.loadAnimation(0, filePath);
             if (tempAnim != 0) {
-                nf.MergeAnimation(mergedAnim, tempAnim);
+                STAGE.mergeAnimation(mergedAnim, tempAnim);
                 loadedAnims.add(tempAnim);
             }
         }
 
         for (int i = 1; i < loadedAnims.size(); i++) {
-            nf.DeleteAnimation(loadedAnims.get(i));
+            ANIMATIONS.deleteAnimation(loadedAnims.get(i));
         }
 
         return mergedAnim;
@@ -221,10 +225,9 @@ public final class StageAnimSyncHelper {
         remoteStageModels.remove(playerUUID);
         List<Long> anims = remoteStageAnims.remove(playerUUID);
         if (anims != null) {
-            NativeFunc nf = NativeFunc.GetInst();
             for (long handle : anims) {
                 if (handle != 0) {
-                    nf.DeleteAnimation(handle);
+                    ANIMATIONS.deleteAnimation(handle);
                 }
             }
         }

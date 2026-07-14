@@ -4,11 +4,20 @@ plugins {
 	id 'dev.architectury.loom' version '1.10.455' apply false
 }
 
+def isWindows = System.getProperty('os.name').toLowerCase().contains('windows')
+
+if (isWindows) {
+	System.setProperty('javax.net.ssl.trustStoreType', 'Windows-ROOT')
+}
+
 architectury {
 	minecraft = '1.21.5'
 }
 
 allprojects {
+	apply plugin: 'java'
+	apply plugin: 'architectury-plugin'
+
 	group = maven_group
 	version = '1.0.5-1.21.5-1'
 	
@@ -38,10 +47,26 @@ allprojects {
 		}
 		mavenCentral()
 	}
+
+	tasks.withType(JavaCompile).configureEach {
+		options.encoding = 'UTF-8'
+		options.release = 21
+	}
+
+	java {
+		toolchain {
+			languageVersion = JavaLanguageVersion.of(21)
+		}
+		withSourcesJar()
+	}
 }
 
 subprojects {
 	apply plugin: 'dev.architectury.loom'
+
+	base {
+		archivesName = "mmdskin-${project.name}"
+	}
 	
 	loom {
 		silentMojangMappingsLicense()
@@ -58,21 +83,42 @@ subprojects {
 // ============================================================================
 
 def rustEngineDir = file('rust_engine')
-def nativesResourceDir = file('common/src/main/resources/natives')
+def generatedNativeResourcesDir = file('common/build/generated/resources/mmdskin')
+def rustReleaseDir = new File(rustEngineDir, 'target/release')
+def rustLibraryName = isWindows
+		? 'mmd_engine.dll'
+		: (System.getProperty('os.name').toLowerCase().contains('mac')
+				? 'libmmd_engine.dylib'
+				: 'libmmd_engine.so')
+def rustNativeLibrary = new File(rustReleaseDir, rustLibraryName)
+def rustBuildInputs = fileTree(rustEngineDir) {
+	include 'Cargo.toml'
+	include 'Cargo.lock'
+	include 'build.rs'
+	include 'config.toml'
+	include '.cargo/**'
+	include 'src/**'
+	include 'bullet_wrapper/**'
+	include 'deps/bullet3/src/**'
+	exclude 'target/**'
+}
 
 task buildRustEngine {
+	inputs.files(rustBuildInputs)
+	outputs.file(rustNativeLibrary)
+
 	doLast {
 		def cargo = findCargo()
 		logger.lifecycle("[Rust] 使用 cargo: ${cargo}")
 		logger.lifecycle("[Rust] 工作目录: ${rustEngineDir.absolutePath}")
-		def proc = new ProcessBuilder(cargo, 'build', '--release')
+		def proc = new ProcessBuilder(cargo, 'build', '--release', '--locked')
 				.directory(rustEngineDir)
 				.redirectErrorStream(true)
 				.start()
 		proc.inputStream.eachLine { line -> logger.lifecycle("[cargo] ${line}") }
 		def exitCode = proc.waitFor()
 		if (exitCode != 0) {
-			throw new GradleException("cargo build --release 失败，退出码: ${exitCode}")
+			throw new GradleException("cargo build --release --locked 失败，退出码: ${exitCode}")
 		}
 		logger.lifecycle("[Rust] 编译完成")
 	}
@@ -80,28 +126,34 @@ task buildRustEngine {
 
 task copyRustNatives(type: Copy) {
 	dependsOn buildRustEngine
+	into generatedNativeResourcesDir
 	
 	def osName = System.getProperty('os.name').toLowerCase()
-	def releaseDir = new File(rustEngineDir, 'target/release')
 	
 	if (osName.contains('windows')) {
-		from(releaseDir) { include 'mmd_engine.dll' }
-		into new File(nativesResourceDir, 'windows-x64')
+		from(rustReleaseDir) {
+			include 'mmd_engine.dll'
+			into 'natives/windows-x64'
+		}
 		logger.lifecycle('[Rust] 目标平台: windows-x64')
 	} else if (osName.contains('mac')) {
-		from(releaseDir) { include 'libmmd_engine.dylib' }
-		into new File(nativesResourceDir, 'macos-x64')
+		from(rustReleaseDir) {
+			include 'libmmd_engine.dylib'
+			into 'natives/macos-x64'
+		}
 		logger.lifecycle('[Rust] 目标平台: macos-x64')
 	} else if (osName.contains('linux')) {
-		from(releaseDir) { include 'libmmd_engine.so' }
-		into new File(nativesResourceDir, 'linux-x64')
+		from(rustReleaseDir) {
+			include 'libmmd_engine.so'
+			into 'natives/linux-x64'
+		}
 		logger.lifecycle('[Rust] 目标平台: linux-x64')
 	} else {
 		logger.warn('[Rust] 未知平台，跳过原生库复制: ' + osName)
 	}
 }
 
-project(':common').tasks.named('processResources').configure { dependsOn copyRustNatives }
+project(':common').sourceSets.main.resources.srcDir(tasks.named('copyRustNatives'))
 
 static String findCargo() {
     def isWin = System.getProperty('os.name').toLowerCase().contains('windows')

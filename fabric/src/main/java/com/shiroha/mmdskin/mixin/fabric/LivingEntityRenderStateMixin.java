@@ -1,33 +1,24 @@
-/* 文件职责：在 Fabric 生物渲染状态中缓存实体上下文。 */
+// 负责在 Fabric 可复用 Living RenderState 上保存并清空不可变快照。
 package com.shiroha.mmdskin.mixin.fabric;
 
-import com.shiroha.mmdskin.renderer.integration.state.LivingEntityRenderStateBridge;
+import com.shiroha.mmdskin.client.frame.MmdRenderSnapshot;
+import com.shiroha.mmdskin.client.frame.MmdRenderStateExtension;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
-import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 
 @Mixin(LivingEntityRenderState.class)
-public abstract class LivingEntityRenderStateMixin implements LivingEntityRenderStateBridge {
+public abstract class LivingEntityRenderStateMixin implements MmdRenderStateExtension {
     @Unique
-    private LivingEntity mmdskin$livingEntity;
-
-    @Unique
-    private float mmdskin$tickDelta;
+    private MmdRenderSnapshot mmdskin$snapshot;
 
     @Override
-    public LivingEntity mmdskin$getLivingEntity() {
-        return mmdskin$livingEntity;
+    public MmdRenderSnapshot mmdskin$snapshot() {
+        return mmdskin$snapshot;
     }
 
     @Override
-    public float mmdskin$getTickDelta() {
-        return mmdskin$tickDelta;
-    }
-
-    @Override
-    public void mmdskin$setLivingEntityContext(LivingEntity entity, float tickDelta) {
-        this.mmdskin$livingEntity = entity;
-        this.mmdskin$tickDelta = tickDelta;
+    public void mmdskin$setSnapshot(MmdRenderSnapshot snapshot) {
+        mmdskin$snapshot = snapshot;
     }
 }

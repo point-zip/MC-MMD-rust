@@ -1,3 +1,5 @@
+//! 负责组合单个 VRM 模型的运行时子系统与帧输入输出。
+
 use crate::model::{MmdModel, VrmExtensions};
 
 use super::{
@@ -18,8 +20,10 @@ pub(crate) struct VrmModelRuntimeState {
 
 impl VrmModelRuntimeState {
     pub(crate) fn new(model: &mut MmdModel, extensions: VrmExtensions) -> Self {
-        let mut input = VrmRuntimeInput::default();
-        input.first_person = model.is_first_person_enabled();
+        let input = VrmRuntimeInput {
+            first_person: model.is_first_person_enabled(),
+            ..VrmRuntimeInput::default()
+        };
         Self {
             control_rig: ControlRigRuntime::new(model),
             constraints: ConstraintRuntime::new(extensions.node_constraints, &model.bone_manager),

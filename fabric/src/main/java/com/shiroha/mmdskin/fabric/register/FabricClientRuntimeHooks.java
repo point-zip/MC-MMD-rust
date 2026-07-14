@@ -2,11 +2,15 @@
 package com.shiroha.mmdskin.fabric.register;
 
 import com.shiroha.mmdskin.bonesync.BoneSyncManager;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.shiroha.mmdskin.client.gpu.MmdRenderPipelines;
+import com.shiroha.mmdskin.compat.iris.IrisCompatibility;
 import com.shiroha.mmdskin.config.UIConstants;
 import com.shiroha.mmdskin.debug.client.PerformanceHud;
 import com.shiroha.mmdskin.fabric.network.MmdSkinNetworkPack;
+import com.shiroha.mmdskin.fabric.compat.YsmCompat;
 import com.shiroha.mmdskin.player.runtime.MmdSkinRendererPlayerHelper;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.stage.application.StageSessionService;
 import com.shiroha.mmdskin.stage.client.camera.MMDCameraController;
 import com.shiroha.mmdskin.stage.client.sync.StageAnimSyncHelper;
@@ -18,9 +22,16 @@ import com.shiroha.mmdskin.ui.wheel.ConfigWheelScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
+import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.resources.ResourceManager;
 
 final class FabricClientRuntimeHooks {
     private final KeyMapping keyConfigWheel;
@@ -38,6 +49,51 @@ final class FabricClientRuntimeHooks {
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(() -> onJoin(client)));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> onDisconnect());
         HudRenderCallback.EVENT.register((graphics, tickDelta) -> PerformanceHud.render(graphics));
+        registerWorldRendering();
+        registerPipelineReload();
+    }
+
+    private static void registerWorldRendering() {
+        WorldRenderEvents.START.register(context -> MmdClientRenderRuntime.current().beginFrame(
+                context.tickCounter().getGameTimeDeltaTicks()));
+        WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+            if (IrisCompatibility.isShadowPass()) {
+                MmdClientRenderRuntime.current().frameQueue().clear();
+                return;
+            }
+            MmdClientRenderRuntime runtime = MmdClientRenderRuntime.current();
+            LocalPlayer player = Minecraft.getInstance().player;
+            float partialTick = context.tickCounter().getGameTimeDeltaPartialTick(false);
+            runtime.firstPerson().localModels().contribute(
+                    Minecraft.getInstance(), context.camera(), partialTick,
+                    runtime.frameId(), runtime.frameDeltaSeconds(),
+                    player != null && YsmCompat.isYsmActive(player),
+                    context.matrixStack(), context.consumers());
+            var camera = context.camera().getPosition();
+            runtime.flushWorldFrame(
+                    camera.x, camera.y, camera.z, LightTexture.FULL_BRIGHT);
+        });
+    }
+
+    private static void registerPipelineReload() {
+        ResourceManagerHelper.get(PackType.CLIENT_RESOURCES).registerReloadListener(
+                new SimpleSynchronousResourceReloadListener() {
+                    private static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(
+                            "mmdskin", "render_pipelines");
+
+                    @Override
+                    public ResourceLocation getFabricId() {
+                        return ID;
+                    }
+
+                    @Override
+                    public void onResourceManagerReload(ResourceManager resourceManager) {
+                        MmdRenderPipelines.deactivate();
+                        Minecraft minecraft = Minecraft.getInstance();
+                        MmdRenderPipelines.validateAndActivate(
+                                RenderSystem.getDevice(), minecraft.getShaderManager()::getShader);
+                    }
+                });
     }
 
     private void onClientTick(Minecraft minecraft) {
@@ -46,7 +102,7 @@ final class FabricClientRuntimeHooks {
             return;
         }
 
-        MMDModelManager.tick();
+        MmdClientRenderRuntime.current().tick();
         StageAnimSyncHelper.tickPending();
         BoneSyncManager.tickLocal();
 
@@ -93,6 +149,7 @@ final class FabricClientRuntimeHooks {
 
     private void onDisconnect() {
         MMDCameraController.getInstance().exitStageMode();
+        MmdClientRenderRuntime.current().firstPerson().reset();
         PlayerModelSyncManager.onDisconnect();
         MmdSkinRendererPlayerHelper.onDisconnect();
         BoneSyncManager.onDisconnect();

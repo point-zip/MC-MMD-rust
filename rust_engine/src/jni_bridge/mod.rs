@@ -1,69 +1,34 @@
-//! JNI 绑定层 - 与 Java 代码交互
+//! 负责集中承载 Java 与 Rust 之间的受检 native 边界。
 
 mod animation_handle;
+mod error;
 mod model_handle;
-mod native_func;
+mod native_bindings;
+mod render_data;
+mod runtime;
+mod runtime_bindings;
+mod texture_handle;
 
-pub use animation_handle::AnimationHandle;
-pub use model_handle::ModelHandle;
-pub use native_func::*;
+pub(crate) use animation_handle::AnimationHandle;
+pub(crate) use error::{catch_bridge, BridgeError, BridgeResult};
+pub(crate) use model_handle::ModelHandle;
+pub(crate) use render_data::ABI_VERSION;
+pub(crate) use runtime::{ANIMATIONS, FBX_CACHE, MODELS, NATIVE_RUNTIME};
+pub(crate) use texture_handle::TextureHandle;
 
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
-
-use crate::animation::fbx_loader::FbxCache;
 use crate::animation::VmdAnimation;
 use crate::model::MmdModel;
-use crate::texture::Texture;
 
-/// FBX 文件解析缓存（避免重复解析大文件）
-pub static FBX_CACHE: Lazy<RwLock<HashMap<String, Arc<FbxCache>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// 全局模型存储
-pub static MODELS: Lazy<RwLock<HashMap<i64, Arc<Mutex<MmdModel>>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// 全局动画存储
-pub static ANIMATIONS: Lazy<RwLock<HashMap<i64, Arc<VmdAnimation>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// 全局纹理存储
-pub static TEXTURES: Lazy<RwLock<HashMap<i64, Arc<Texture>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// 纹理路径 → 句柄索引（避免重复加载同一文件）
-pub static TEXTURE_PATH_INDEX: Lazy<RwLock<HashMap<String, i64>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// 生成唯一句柄 ID
-fn next_handle_id() -> i64 {
-    use std::sync::atomic::{AtomicI64, Ordering};
-    static COUNTER: AtomicI64 = AtomicI64::new(1);
-    COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
-/// 注册模型并返回句柄
 pub fn register_model(model: MmdModel) -> i64 {
-    let id = next_handle_id();
-    let mut models = MODELS.write().unwrap();
-    models.insert(id, Arc::new(Mutex::new(model)));
-    id
+    NATIVE_RUNTIME
+        .register_model(model)
+        .map(ModelHandle::raw)
+        .unwrap_or(0)
 }
 
-/// 注册动画并返回句柄
 pub fn register_animation(animation: VmdAnimation) -> i64 {
-    let id = next_handle_id();
-    let mut animations = ANIMATIONS.write().unwrap();
-    animations.insert(id, Arc::new(animation));
-    id
-}
-
-/// 注册纹理并返回句柄
-pub fn register_texture(texture: Texture) -> i64 {
-    let id = next_handle_id();
-    let mut textures = TEXTURES.write().unwrap();
-    textures.insert(id, Arc::new(texture));
-    id
+    NATIVE_RUNTIME
+        .register_animation(animation)
+        .map(AnimationHandle::raw)
+        .unwrap_or(0)
 }

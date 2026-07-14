@@ -1,4 +1,4 @@
-//! Motion 核心数据结构 - 复刻 mdanceio 实现
+//! 负责组织动画轨道与关键帧数据。
 
 use std::collections::HashMap;
 
@@ -71,7 +71,7 @@ impl Motion {
     pub fn insert_bone_keyframe(&mut self, name: &str, keyframe: BoneKeyframe) {
         self.bone_tracks
             .entry(name.to_string())
-            .or_insert_with(BoneMotionTrack::new)
+            .or_default()
             .insert_keyframe(keyframe);
         self.dirty = true;
     }
@@ -80,7 +80,7 @@ impl Motion {
     pub fn insert_morph_keyframe(&mut self, name: &str, keyframe: MorphKeyframe) {
         self.morph_tracks
             .entry(name.to_string())
-            .or_insert_with(MorphMotionTrack::new)
+            .or_default()
             .insert_keyframe(keyframe);
         self.dirty = true;
     }
@@ -111,7 +111,7 @@ impl Motion {
     pub fn insert_ik_keyframe(&mut self, name: &str, keyframe: IkKeyframe) {
         self.ik_tracks
             .entry(name.to_string())
-            .or_insert_with(IkMotionTrack::new)
+            .or_default()
             .insert_keyframe(keyframe);
         self.dirty = true;
     }
@@ -229,24 +229,18 @@ impl Motion {
     pub fn merge(&mut self, other: &Motion) {
         // 合并骨骼轨道
         for (name, track) in &other.bone_tracks {
-            let entry = self
-                .bone_tracks
-                .entry(name.clone())
-                .or_insert_with(BoneMotionTrack::new);
+            let entry = self.bone_tracks.entry(name.clone()).or_default();
 
-            for (_, keyframe) in &track.keyframes {
+            for keyframe in track.keyframes.values() {
                 entry.insert_keyframe(keyframe.clone());
             }
         }
 
         // 合并 Morph 轨道
         for (name, track) in &other.morph_tracks {
-            let entry = self
-                .morph_tracks
-                .entry(name.clone())
-                .or_insert_with(MorphMotionTrack::new);
+            let entry = self.morph_tracks.entry(name.clone()).or_default();
 
-            for (_, keyframe) in &track.keyframes {
+            for keyframe in track.keyframes.values() {
                 entry.insert_keyframe(keyframe.clone());
             }
         }

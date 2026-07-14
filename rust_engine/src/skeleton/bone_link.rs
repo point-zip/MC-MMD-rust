@@ -1,4 +1,4 @@
-//! 骨骼节点 - 参考 nphysics MultibodyLink 设计
+//! 负责表示单个骨骼节点及其局部变换。
 
 use bitflags::bitflags;
 use glam::{Mat4, Quat, Vec3};
@@ -362,7 +362,7 @@ impl BoneLink {
             rotation = self.ik_rotate * rotation;
         }
         if self.flags.contains(BoneFlags::APPEND_ROTATE) {
-            rotation = rotation * self.append_rotate;
+            rotation *= self.append_rotate;
         }
 
         self.local_to_parent = Mat4::from_rotation_translation(rotation, translate);

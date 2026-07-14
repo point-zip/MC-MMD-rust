@@ -1,7 +1,7 @@
 /* 文件职责：缓存模型 morph 索引并为内建表情提供匹配查询。 */
 package com.shiroha.mmdskin.expression;
 
-import com.shiroha.mmdskin.bridge.runtime.NativeModelBridgePorts;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
 import com.shiroha.mmdskin.bridge.runtime.NativeModelQueryPort;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ModelMorphCatalog {
     private static final Map<Long, ModelMorphCatalog> CACHE = new ConcurrentHashMap<>();
     private static final List<String> PREFIXES = List.of("morph_", "face_", "expression_");
-    private static volatile NativeModelQueryPort modelQueryPort = NativeModelBridgePorts.queryPort();
+    private static volatile NativeModelQueryPort modelQueryPort = NativePortAdapters.modelQuery();
 
     private final long modelHandle;
     private final List<MorphEntry> entries;
@@ -38,7 +38,7 @@ public final class ModelMorphCatalog {
     }
 
     public static void configureRuntimeCollaborators(NativeModelQueryPort modelQueryPort) {
-        ModelMorphCatalog.modelQueryPort = modelQueryPort != null ? modelQueryPort : NativeModelBridgePorts.queryPort();
+        ModelMorphCatalog.modelQueryPort = modelQueryPort != null ? modelQueryPort : NativePortAdapters.modelQuery();
     }
 
     static ModelMorphCatalog forTesting(List<MorphEntry> entries) {

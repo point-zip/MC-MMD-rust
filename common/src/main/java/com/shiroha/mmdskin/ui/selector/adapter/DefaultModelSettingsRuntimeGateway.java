@@ -1,14 +1,19 @@
+// 负责把已保存的模型设置应用到当前本地 Model Instance。
 package com.shiroha.mmdskin.ui.selector.adapter;
 
-import com.shiroha.mmdskin.NativeFunc;
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
+import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
+import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
+import com.shiroha.mmdskin.client.model.ModelKey;
 import com.shiroha.mmdskin.config.ModelConfigData;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
-import com.shiroha.mmdskin.renderer.runtime.model.MMDModelManager;
 import com.shiroha.mmdskin.ui.config.ModelSelectorConfig;
 import com.shiroha.mmdskin.ui.selector.port.ModelSettingsRuntimeGateway;
 import net.minecraft.client.Minecraft;
 
 public class DefaultModelSettingsRuntimeGateway implements ModelSettingsRuntimeGateway {
+    private final NativeModelPort nativeModels = NativePortAdapters.model();
+
     @Override
     public void applyConfigIfSelected(String modelName, ModelConfigData config) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -21,17 +26,17 @@ public class DefaultModelSettingsRuntimeGateway implements ModelSettingsRuntimeG
             return;
         }
 
-        MMDModelManager.Model model = MMDModelManager.GetModel(
-                selectedModel,
-                PlayerModelResolver.getCacheKey(minecraft.player)
-        );
-        if (model == null) {
+        ModelKey key = new ModelKey(selectedModel, PlayerModelResolver.getCacheKey(minecraft.player), ModelKey.Usage.ENTITY);
+        var lease = MmdClientRenderRuntime.current().acquire(key).orElse(null);
+        if (lease == null) {
             return;
         }
-
-        long handle = model.model.getModelHandle();
-        NativeFunc nativeFunc = NativeFunc.GetInst();
-        nativeFunc.SetEyeTrackingEnabled(handle, config.eyeTrackingEnabled);
-        nativeFunc.SetEyeMaxAngle(handle, config.eyeMaxAngle);
+        try (lease) {
+            var model = lease.instance();
+            model.applyModelConfig(config);
+            long handle = model.handle();
+            nativeModels.setEyeTrackingEnabled(handle, config.eyeTrackingEnabled);
+            nativeModels.setEyeMaxAngle(handle, config.eyeMaxAngle);
+        }
     }
 }

@@ -1,4 +1,4 @@
-//! VMD 文件加载器 - 复刻 mdanceio 实现
+//! 负责解析 VMD 动画文件。
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
@@ -33,7 +33,7 @@ pub struct VmdFile {
 impl VmdFile {
     /// 从文件路径加载 VMD
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path.as_ref()).map_err(|e| MmdError::Io(e))?;
+        let file = File::open(path.as_ref()).map_err(MmdError::Io)?;
         let mut reader = BufReader::new(file);
         Self::load_from_reader(&mut reader)
     }

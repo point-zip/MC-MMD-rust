@@ -1,10 +1,10 @@
-//! 纹理加载和管理
+//! 负责定义并导出 native 纹理数据。
 
 mod loader;
 
 pub use loader::load_texture;
 
-/// 纹理数据
+/// RGBA8 纹理数据
 #[derive(Clone)]
 pub struct Texture {
     pub width: u32,
@@ -28,7 +28,7 @@ impl Texture {
         self.data.len()
     }
 
-    /// 检查是否包含透明通道
+    /// 检查是否至少包含一个非完全不透明像素
     pub fn has_transparency(&self) -> bool {
         self.has_alpha
     }

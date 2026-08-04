@@ -109,6 +109,8 @@ public class NativeFunc {
 
     public native void SetLayerLoop(long model, long layer, boolean loop);
 
+    public native void SetLayerWeight(long model, long layer, float weight);
+
     public native boolean IsLayerAnimationFinished(long model, long layer);
 
     public native boolean SetLayerBoneMask(long model, long layer, String rootBoneName);
@@ -128,6 +130,23 @@ public class NativeFunc {
     public native void GetRightHandMat(long model, long mat);
 
     public native void GetLeftHandMat(long model, long mat);
+
+    /** 提交本帧 TaCZ 手部模型局部目标；validMask 位 0 为左手、位 1 为右手。 */
+    public native boolean SetTaczArmTargets(long model, float[] matrices, int validMask);
+
+    /** 清除尚未被 native 更新周期取走的 TaCZ 瞬态双臂目标。 */
+    public native void ClearTaczArmTargets(long model);
+
+    /** 读取并清除最近一次更新结果：低 2 位为收到目标，高 2 位为成功应用。 */
+    public native int GetLastTaczArmApplyResult(long model);
+
+    /** 读取并清除左右手最终挂点诊断；output 必须恰有 24 项。 */
+    public native boolean GetLastTaczArmDiagnostics(long model, float[] output);
+
+    /** 提交第三人称左右上臂的相对旋转，数组布局为 left/right xyzw。 */
+    public native boolean SetTaczThirdPersonArmRotations(long model, float[] rotations, int validMask);
+
+    public native void ClearTaczThirdPersonArmRotations(long model);
 
     public native long LoadTexture(String filename);
 

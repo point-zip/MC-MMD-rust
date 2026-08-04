@@ -28,6 +28,8 @@ import org.lwjgl.system.MemoryUtil;
 /** 文件职责：执行 GPU skinning 模型实例的渲染流程。 */
 final class GpuSkinningModelRenderer {
     private static final Logger logger = LogManager.getLogger();
+    private static final long FIRST_PERSON_DIAGNOSTIC_INTERVAL_NANOS = 5_000_000_000L;
+    private static long lastFirstPersonDiagnosticNanos;
 
     private GpuSkinningModelRenderer() {
     }
@@ -51,11 +53,7 @@ final class GpuSkinningModelRenderer {
         target.light0Direction.rotate(workingQuat.identity().rotateY(yawRad));
         target.light1Direction.rotate(workingQuat.identity().rotateY(yawRad));
 
-        deliverStack.mulPose(workingQuat.identity().rotateY(-yawRad));
-        deliverStack.mulPose(workingQuat.identity().rotateX(entityPitch * ((float) Math.PI / 180F)));
-        deliverStack.translate(entityTrans.x, entityTrans.y, entityTrans.z);
-        float baseScale = target.modelScaleValue();
-        deliverStack.scale(baseScale, baseScale, baseScale);
+        target.applyModelRootTransform(deliverStack, entityYaw, entityPitch, entityTrans);
 
         updateGpuStateIfDirty(target, nativeBackend, modelHandle);
         boolean firstPersonView = context != null && context.isFirstPerson();
@@ -125,15 +123,33 @@ final class GpuSkinningModelRenderer {
         target.firstPersonIndexBuffer.clear();
         int indexCount = nativeBackend.refreshFirstPersonIndices(
                 modelHandle, target.firstPersonMatrixBuffer, true, target.firstPersonIndexBuffer);
+        diagnoseFirstPersonIndices(nativeBackend, modelHandle, indexCount);
         if (indexCount <= 0) {
             return false;
         }
         target.firstPersonIndexBuffer.position(0);
         target.firstPersonIndexBuffer.limit(indexCount * target.indexElementSize);
-        GL46C.glBindBuffer(GL46C.GL_ELEMENT_ARRAY_BUFFER, target.firstPersonIndexBufferObject);
-        GL46C.glBufferSubData(GL46C.GL_ELEMENT_ARRAY_BUFFER, 0, target.firstPersonIndexBuffer);
+        // EBO 绑定属于当前 VAO 状态。此处发生在绑定 MMD VAO 之前，不能污染 Minecraft 正在使用的 VAO。
+        GL46C.glNamedBufferSubData(target.firstPersonIndexBufferObject, 0, target.firstPersonIndexBuffer);
         target.firstPersonIndexBuffer.clear();
         return true;
+    }
+
+    /** 低频记录最终上传的第一人称几何量，用于区分网格为空与姿态离屏。 */
+    private static void diagnoseFirstPersonIndices(NativeRenderBackendPort nativeBackend,
+                                                   long modelHandle, int firstPersonIndexCount) {
+        long now = System.nanoTime();
+        if (now - lastFirstPersonDiagnosticNanos < FIRST_PERSON_DIAGNOSTIC_INTERVAL_NANOS) {
+            return;
+        }
+        lastFirstPersonDiagnosticNanos = now;
+        long originalIndexCount = nativeBackend.getIndexCount(modelHandle);
+        double ratio = originalIndexCount > 0
+                ? (double) firstPersonIndexCount / (double) originalIndexCount
+                : 0.0;
+        logger.info("MMD 第一人称索引: backend=GPU, kept={}, original={}, ratio={}",
+                firstPersonIndexCount, originalIndexCount,
+                String.format(java.util.Locale.ROOT, "%.4f", ratio));
     }
 
     private static boolean initializeToonShaderIfNeeded() {

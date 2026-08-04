@@ -1,6 +1,7 @@
 package com.shiroha.mmdskin.player.runtime;
 
 import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
+import com.shiroha.mmdskin.compat.tacz.TaczGunDetector;
 import com.shiroha.mmdskin.config.ModelConfigData;
 import com.shiroha.mmdskin.config.ModelConfigManager;
 import com.shiroha.mmdskin.config.RuntimeConfigPortHolder;
@@ -252,7 +253,7 @@ public final class FirstPersonManager {
         double pz = renderOrigin.z;
 
         float bodyYaw = entity instanceof Player player
-                ? fallbackBodyYawDegrees(player, partialTick)
+                ? resolveFirstPersonModelYaw(player, partialTick, fallbackBodyYawDegrees(player, partialTick))
                 : entity instanceof LivingEntity livingEntity
                 ? Mth.rotLerp(partialTick, livingEntity.yBodyRotO, livingEntity.yBodyRot)
                 : Mth.rotLerp(partialTick, entity.yRotO, entity.getYRot());
@@ -262,6 +263,17 @@ public final class FirstPersonManager {
         double worldOffX = eyeOffset[0] * cosYaw - eyeOffset[2] * sinYaw;
         double worldOffZ = eyeOffset[0] * sinYaw + eyeOffset[2] * cosYaw;
         return new Vec3(px + worldOffX, py + eyeOffset[1], pz + worldOffZ);
+    }
+
+    /** TaCZ 第一人称枪械以镜头为基准，姿态、眼位和模型根必须使用同一个 yaw。 */
+    public static float resolveFirstPersonModelYaw(Player player, float tickDelta, float fallbackYaw) {
+        if (player != null && activeDesktopFirstPerson && TaczGunDetector.isGun(player.getMainHandItem())) {
+            float viewYaw = player.getViewYRot(tickDelta);
+            if (Float.isFinite(viewYaw)) {
+                return viewYaw;
+            }
+        }
+        return fallbackYaw;
     }
 
     public static Vec3 getVanillaEyePosition(LivingEntity entity, float partialTick) {

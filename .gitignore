@@ -121,3 +121,5 @@ rust_engine/VR_RUNTIME_HANDOFF.md
 /.tmp_vivecraft_scan
 rust_engine/deps/PhysX/
 rust_engine/deps/bullet3/
+/.gradle-tacz/
+/.tmp-tacz/

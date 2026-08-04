@@ -3,8 +3,10 @@ package com.shiroha.mmdskin.player.render;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.shiroha.mmdskin.bridge.runtime.NativeMatrixPort;
+import com.shiroha.mmdskin.compat.tacz.TaczGunDetector;
 import com.shiroha.mmdskin.config.ModelConfigData;
 import com.shiroha.mmdskin.model.runtime.ManagedModel;
+import com.shiroha.mmdskin.player.runtime.FirstPersonManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -109,6 +111,14 @@ public class ItemRenderHelper {
                                           int packedLight, InteractionHand hand, float heldItemScale) {
         ItemStack itemStack = player.getItemInHand(hand);
         if (itemStack.isEmpty()) {
+            return;
+        }
+
+        // 本地第一人称 TaCZ 枪模由 TaCZ 自己定位瞄具；这里跳过主手，避免重复绘制第三人称物品模型。
+        if (hand == InteractionHand.MAIN_HAND
+                && player == Minecraft.getInstance().player
+                && FirstPersonManager.shouldRenderFirstPerson()
+                && TaczGunDetector.isGun(itemStack)) {
             return;
         }
 

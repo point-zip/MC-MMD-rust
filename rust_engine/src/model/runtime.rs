@@ -1,6 +1,8 @@
 //! MMD 运行时模型
 
 use crate::animation::{AnimationLayerManager, VmdAnimation};
+use crate::model::tacz_arm_targets::{apply_tacz_arm_targets, TaczArmApplyOutcome, TaczArmTargets};
+use crate::model::tacz_third_person_arms::{TaczThirdPersonArmCache, TaczThirdPersonArmRotations};
 use crate::morph::MorphManager;
 use crate::physics::MMDPhysics;
 use crate::skeleton::BoneManager;
@@ -219,6 +221,8 @@ pub struct MmdModel {
     vr_ik_solver: VrIkSolver,
     /// 最新一帧 VR 调试遥测
     vr_debug_state: VrDebugState,
+    /// TaCZ 第三人称仅首次解析左右上臂骨索引。
+    tacz_third_person_arm_cache: TaczThirdPersonArmCache,
 
     // ======== 矩阵插值过渡 ========
     /// 缓存的蒙皮矩阵（过渡开始时的状态）
@@ -307,6 +311,7 @@ impl MmdModel {
             vr_ik_strength: 1.0,
             vr_ik_solver: VrIkSolver::new(),
             vr_debug_state: VrDebugState::default(),
+            tacz_third_person_arm_cache: TaczThirdPersonArmCache::default(),
             transition_matrices: Vec::new(),
             transition_progress: 0.0,
             transition_duration: 0.0,
@@ -1309,7 +1314,7 @@ impl MmdModel {
     /// 更新动画（每帧调用）- 多动画层版本（CPU蒙皮模式）
     #[allow(unreachable_code)]
     pub fn tick_animation(&mut self, elapsed: f32) {
-        self.tick_animation_internal(elapsed, true);
+        self.tick_animation_internal(elapsed, true, None, None);
         return;
         // 更新所有动画层
         self.animation_layer_manager.update(elapsed);
@@ -1689,19 +1694,32 @@ impl MmdModel {
 
     /// 获取右手矩阵
     pub fn get_right_hand_matrix(&self) -> Mat4 {
-        let names = ["右手首", "右腕", "right_hand", "RightHand"];
-        for name in &names {
-            if let Some(idx) = self.bone_manager.find_bone_by_name(name) {
-                return self.bone_manager.get_global_transform(idx);
-            }
-        }
-        Mat4::IDENTITY
+        // 优先使用模型作者提供的物品挂点；旧模型没有挂点时保持原有手首回退行为。
+        self.get_hand_attachment_matrix(&[
+            "Hand_Attach_R",
+            "ダミー.R",
+            "右手首",
+            "右腕",
+            "right_hand",
+            "RightHand",
+        ])
     }
 
     /// 获取左手矩阵
     pub fn get_left_hand_matrix(&self) -> Mat4 {
-        let names = ["左手首", "左腕", "left_hand", "LeftHand"];
-        for name in &names {
+        // 左右手使用对称的严格名称，避免把另一侧或无关 Dummy 当作物品挂点。
+        self.get_hand_attachment_matrix(&[
+            "Hand_Attach_L",
+            "ダミー.L",
+            "左手首",
+            "左腕",
+            "left_hand",
+            "LeftHand",
+        ])
+    }
+
+    fn get_hand_attachment_matrix(&self, names: &[&str]) -> Mat4 {
+        for name in names {
             if let Some(idx) = self.bone_manager.find_bone_by_name(name) {
                 return self.bone_manager.get_global_transform(idx);
             }
@@ -2337,7 +2355,7 @@ impl MmdModel {
     /// 仅更新动画（不执行 CPU 蒙皮，用于 GPU 蒙皮模式）
     #[allow(unreachable_code)]
     pub fn tick_animation_no_skinning(&mut self, elapsed: f32) {
-        self.tick_animation_internal(elapsed, false);
+        self.tick_animation_internal(elapsed, false, None, None);
         return;
         self.animation_layer_manager.update(elapsed);
         self.begin_animation();
@@ -2409,7 +2427,24 @@ impl MmdModel {
     // ========== 物理系统方法 ==========
 
     /// 初始化物理系统（Bullet3）
-    fn tick_animation_internal(&mut self, elapsed: f32, cpu_skinning: bool) {
+    /// 更新动画并消费一次性 TaCZ 双臂目标；目标不会保存到模型状态中。
+    pub fn tick_animation_with_tacz_targets(
+        &mut self,
+        elapsed: f32,
+        cpu_skinning: bool,
+        targets: Option<TaczArmTargets>,
+        third_person_rotations: Option<TaczThirdPersonArmRotations>,
+    ) -> TaczArmApplyOutcome {
+        self.tick_animation_internal(elapsed, cpu_skinning, targets, third_person_rotations)
+    }
+
+    fn tick_animation_internal(
+        &mut self,
+        elapsed: f32,
+        cpu_skinning: bool,
+        targets: Option<TaczArmTargets>,
+        third_person_rotations: Option<TaczThirdPersonArmRotations>,
+    ) -> TaczArmApplyOutcome {
         self.with_vrm_runtime_state(|model, runtime_state| {
             runtime_state.apply_inputs(model);
         });
@@ -2472,6 +2507,17 @@ impl MmdModel {
             self.end_physics_update();
         }
 
+        // TaCZ 目标必须晚于物理与 VR 分支，避免手臂在同帧被再次覆盖。
+        let mut tacz_outcome = TaczArmApplyOutcome::default();
+        if !self.vr_enabled {
+            if let Some(targets) = targets {
+                tacz_outcome = apply_tacz_arm_targets(&mut self.bone_manager, targets);
+            } else if let Some(rotations) = third_person_rotations {
+                self.tacz_third_person_arm_cache
+                    .apply(&mut self.bone_manager, rotations);
+            }
+        }
+
         self.end_animation();
 
         self.with_vrm_runtime_state(|model, runtime_state| {
@@ -2498,6 +2544,7 @@ impl MmdModel {
             }
             */
         }
+        tacz_outcome
     }
 
     pub fn init_physics(&mut self) -> bool {
@@ -3037,6 +3084,51 @@ mod tests {
     use crate::skeleton::BoneLink;
     use crate::vr::{VrTrackedPose, XR_TO_MODEL_SCALE};
     use crate::vrm_runtime::{ArmIkHandCalibration, BodyTrackingCalibration};
+
+    #[test]
+    fn hand_matrix_should_prefer_explicit_attachment_over_dummy_and_wrist() {
+        let mut model = MmdModel::new();
+        add_test_bone(&mut model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        add_test_bone(&mut model, "ダミー.R", Vec3::new(2.0, 0.0, 0.0));
+        add_test_bone(&mut model, "Hand_Attach_R", Vec3::new(3.0, 0.0, 0.0));
+        model.bone_manager.build_hierarchy();
+
+        assert_eq!(
+            model.get_right_hand_matrix().transform_point3(Vec3::ZERO),
+            Vec3::new(3.0, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn hand_matrix_should_fall_back_to_dummy_then_wrist() {
+        let mut dummy_model = MmdModel::new();
+        add_test_bone(&mut dummy_model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        add_test_bone(&mut dummy_model, "ダミー.R", Vec3::new(2.0, 0.0, 0.0));
+        dummy_model.bone_manager.build_hierarchy();
+
+        let mut wrist_model = MmdModel::new();
+        add_test_bone(&mut wrist_model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        wrist_model.bone_manager.build_hierarchy();
+
+        assert_eq!(
+            dummy_model
+                .get_right_hand_matrix()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(2.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            wrist_model
+                .get_right_hand_matrix()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 0.0, 0.0)
+        );
+    }
+
+    fn add_test_bone(model: &mut MmdModel, name: &str, position: Vec3) {
+        let mut bone = BoneLink::new(name.to_string());
+        bone.initial_position = position;
+        model.bone_manager.add_bone(bone);
+    }
 
     #[test]
     fn set_first_person_mode_should_restore_user_material_visibility() {

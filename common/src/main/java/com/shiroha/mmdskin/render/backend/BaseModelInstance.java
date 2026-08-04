@@ -7,6 +7,8 @@ import com.shiroha.mmdskin.render.scene.RenderScene;
 import com.shiroha.mmdskin.render.pipeline.LivingEntityModelStateHelper;
 import com.shiroha.mmdskin.render.pipeline.RenderPerformanceProfiler;
 import com.shiroha.mmdskin.render.policy.WorldRenderPolicy;
+import com.shiroha.mmdskin.bridge.runtime.NativeTaczArmTargetPort;
+import com.shiroha.mmdskin.compat.tacz.TaczThirdPersonPoseSampler;
 import com.shiroha.mmdskin.stage.client.camera.MMDCameraController;
 import com.shiroha.mmdskin.texture.runtime.TextureRepository;
 import com.mojang.blaze3d.platform.Window;
@@ -96,6 +98,22 @@ public abstract class BaseModelInstance implements ModelInstance {
         firstPersonPoseState.discard();
     }
 
+    /** 在不重复同步实体状态的前提下，让刚提交的一次性手臂目标进入当前 prepared pose。 */
+    public boolean refreshPreparedFirstPersonPose() {
+        return firstPersonPoseState.isPrepared() && update(true);
+    }
+
+    /** 应用所有渲染后端共享的模型根变换，供 TaCZ 坐标换算复用。 */
+    public void applyModelRootTransform(PoseStack stack, float entityYaw, float entityPitch,
+                                        Vector3f entityTranslation) {
+        float degreesToRadians = (float) Math.PI / 180.0f;
+        stack.mulPose(new Quaternionf().rotateY(-entityYaw * degreesToRadians));
+        stack.mulPose(new Quaternionf().rotateX(entityPitch * degreesToRadians));
+        stack.translate(entityTranslation.x, entityTranslation.y, entityTranslation.z);
+        float scale = getModelScale();
+        stack.scale(scale, scale, scale);
+    }
+
     protected final NativeRenderBackendPort backendPort() {
         if (nativeRenderBackendPort == null) {
             throw new IllegalStateException("nativeRenderBackendPort has not been initialized");
@@ -145,6 +163,11 @@ public abstract class BaseModelInstance implements ModelInstance {
     @Override
     public void setLayerLoop(long layer, boolean loop) {
         if (model != 0) backendPort().setLayerLoop(model, layer, loop);
+    }
+
+    @Override
+    public void setLayerWeight(long layer, float weight) {
+        if (model != 0) backendPort().setLayerWeight(model, layer, weight);
     }
 
     @Override
@@ -206,12 +229,36 @@ public abstract class BaseModelInstance implements ModelInstance {
                     vrActive);
             RenderPerformanceProfiler.get().endTimer(RenderPerformanceProfiler.SECTION_LIVING_STATE_SYNC, syncTimer);
 
-            update();
+            boolean submittedThirdPersonPose = submitTaczThirdPersonPose(entityIn, context, tickDelta);
+
+            // 首次 update 可能只初始化计时器；此时必须撤销尚未被 native 消费的瞬态包。
+            if (!update() && submittedThirdPersonPose) clearTaczThirdPersonPose();
         }
         try {
             doRenderModel(entityIn, entityYaw, entityPitch, entityTrans, mat, packedLight, context);
         } finally {
             firstPersonPoseState.finishRender(context != null && context.isFirstPerson());
+        }
+    }
+
+    private boolean submitTaczThirdPersonPose(LivingEntity entity, RenderScene context, float tickDelta) {
+        if (context == null || !context.isWorldScene() || vrActive
+                || !(nativeRenderBackendPort instanceof NativeTaczArmTargetPort targetPort)) {
+            clearTaczThirdPersonPose();
+            return false;
+        }
+        var sampled = TaczThirdPersonPoseSampler.sample(entity, tickDelta);
+        if (sampled.isEmpty()) {
+            targetPort.clearTaczThirdPersonArmRotations(model);
+            return false;
+        }
+        var pose = sampled.get();
+        return targetPort.setTaczThirdPersonArmRotations(model, pose.toNativePacket(), pose.validMask());
+    }
+
+    private void clearTaczThirdPersonPose() {
+        if (nativeRenderBackendPort instanceof NativeTaczArmTargetPort targetPort && model != 0) {
+            targetPort.clearTaczThirdPersonArmRotations(model);
         }
     }
 

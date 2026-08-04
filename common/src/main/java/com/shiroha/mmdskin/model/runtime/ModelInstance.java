@@ -25,6 +25,9 @@ public interface ModelInstance {
     default void setLayerLoop(long layer, boolean loop) {
     }
 
+    default void setLayerWeight(long layer, float weight) {
+    }
+
     void resetPhysics();
 
     long getModelHandle();

@@ -6,6 +6,10 @@ use jni::JNIEnv;
 use std::ptr;
 use std::sync::Arc;
 
+use super::tacz_arm_target::{
+    clear_tacz_arm_diagnostics, clear_tacz_arm_targets, clear_tacz_third_person_arm_rotations,
+    record_tacz_arm_apply_result, take_tacz_arm_targets, take_tacz_third_person_arm_rotations,
+};
 use crate::animation::fbx_loader;
 use crate::animation::{VmdAnimation, VmdFile};
 use crate::model::{load_pmx, load_vrm};
@@ -158,6 +162,9 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_DeleteModel(
     _class: JClass,
     model: jlong,
 ) {
+    clear_tacz_arm_targets(model);
+    clear_tacz_third_person_arm_rotations(model);
+    clear_tacz_arm_diagnostics(model);
     let mut models = MODELS.write().unwrap_or_else(|e| e.into_inner());
     models.remove(&model);
 }
@@ -170,11 +177,21 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_UpdateModel(
     model: jlong,
     delta_time: jfloat,
 ) {
-    let models = MODELS.read().unwrap();
+    let model_handle = model;
+    let targets = take_tacz_arm_targets(model);
+    let third_person_rotations = take_tacz_third_person_arm_rotations(model);
+    let received_mask = targets.map_or(0, |value| value.valid_mask());
+    let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
     if let Some(model_arc) = models.get(&model) {
-        let mut model = model_arc.lock().unwrap();
+        let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
         // 更新动画（内部已包含物理更新）
-        model.tick_animation(delta_time);
+        let outcome = model.tick_animation_with_tacz_targets(
+            delta_time,
+            true,
+            targets,
+            third_person_rotations,
+        );
+        record_tacz_arm_apply_result(model_handle, received_mask, outcome);
     }
 }
 
@@ -2429,10 +2446,20 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_UpdateAnimationOnly(
     model: jlong,
     delta_time: jfloat,
 ) {
-    let models = MODELS.read().unwrap();
+    let model_handle = model;
+    let targets = take_tacz_arm_targets(model);
+    let third_person_rotations = take_tacz_third_person_arm_rotations(model);
+    let received_mask = targets.map_or(0, |value| value.valid_mask());
+    let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
     if let Some(model_arc) = models.get(&model) {
-        let mut model = model_arc.lock().unwrap();
-        model.tick_animation_no_skinning(delta_time);
+        let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
+        let outcome = model.tick_animation_with_tacz_targets(
+            delta_time,
+            false,
+            targets,
+            third_person_rotations,
+        );
+        record_tacz_arm_apply_result(model_handle, received_mask, outcome);
     }
 }
 

@@ -5,6 +5,8 @@ mod loader;
 mod material;
 mod runtime;
 mod submesh;
+pub mod tacz_arm_targets;
+pub mod tacz_third_person_arms;
 
 mod bone_mapping;
 mod vrm_extensions;

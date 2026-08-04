@@ -1,17 +1,22 @@
 package com.shiroha.mmdskin.compat.tacz;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.shiroha.mmdskin.bridge.runtime.NativeRuntimeBridgeHolder;
 import com.shiroha.mmdskin.bridge.runtime.NativeTaczArmTargetPort;
+import com.shiroha.mmdskin.config.ModelConfigData;
+import com.shiroha.mmdskin.config.ModelConfigManager;
 import com.shiroha.mmdskin.model.runtime.ManagedModel;
+import com.shiroha.mmdskin.player.model.PlayerModelResolver;
+import com.shiroha.mmdskin.player.render.PlayerRenderHelper;
 import com.shiroha.mmdskin.player.runtime.FirstPersonManager;
 import com.shiroha.mmdskin.render.backend.BaseModelInstance;
 import com.shiroha.mmdskin.render.scene.MutableRenderPose;
 import com.shiroha.mmdskin.render.scene.RenderScene;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
-import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.joml.Matrix4f;
@@ -53,11 +58,56 @@ public final class TaczFirstPersonPostRenderer {
                 savedPose, savedStack, tickDelta, packedLight));
     }
 
+    /**
+     * 世界实体入口被 BER/OBJ/实例化渲染流程跳过时，从相机阶段已准备的姿态恢复同帧后置上下文。
+     */
+    public static boolean ensureDeferredAtTaczHead(AbstractClientPlayer player, ItemStack gunStack,
+                                                   float tickDelta, int packedLight) {
+        if (hasUsableDeferredDraw(player, gunStack)) {
+            return true;
+        }
+        clearDeferredDraw();
+
+        Minecraft minecraft = Minecraft.getInstance();
+        if (player == null || minecraft.player != player || !FirstPersonManager.shouldRenderFirstPerson()) {
+            return false;
+        }
+
+        try {
+            PlayerModelResolver.Result resolved = PlayerModelResolver.resolve(player);
+            if (resolved == null || !(resolved.model().modelInstance() instanceof BaseModelInstance model)
+                    || model.getModelHandle() == 0L || !model.hasPreparedFirstPersonPose() || model.isVrActive()) {
+                return false;
+            }
+
+            float safeTickDelta = Float.isFinite(tickDelta) ? Mth.clamp(tickDelta, 0.0f, 1.0f) : 0.0f;
+            ManagedModel managedModel = resolved.model();
+            MutableRenderPose pose = PlayerRenderHelper.calculateMutableRenderPose(player, managedModel, safeTickDelta);
+            ModelConfigData modelConfig = ModelConfigManager.getConfig(managedModel.requestKey().modelName());
+            float outerScale = managedModel.renderProperties().modelScale();
+            float combinedScale = outerScale * modelConfig.modelScale;
+            FirstPersonManager.preRender(model.getModelHandle(), combinedScale, true);
+
+            Vec3 camera = minecraft.gameRenderer.getMainCamera().getPosition();
+            PoseStack entityRoot = createEntityRootPose(
+                    Mth.lerp(safeTickDelta, player.xo, player.getX()),
+                    Mth.lerp(safeTickDelta, player.yo, player.getY()),
+                    Mth.lerp(safeTickDelta, player.zo, player.getZ()),
+                    camera.x, camera.y, camera.z);
+            defer(player, gunStack, managedModel, model, pose, entityRoot,
+                    safeTickDelta, packedLight, outerScale);
+            return hasUsableDeferredDraw(player, gunStack);
+        } catch (RuntimeException | LinkageError e) {
+            clearDeferredDraw();
+            LOGGER.warn("TaCZ 第一人称 MMD 后置上下文恢复失败，将保留原版手臂回退", e);
+            return false;
+        }
+    }
+
     /** 同一玩家当前帧已有可用 MMD 后置绘制时，禁止 TaCZ 内部栈切换导致方块手臂闪回。 */
     static boolean ownsArmRendering(Object player, Object gunStack) {
         DeferredDraw draw = DEFERRED_DRAW.get();
-        boolean ready = draw != null && draw.player == player
-                && draw.model.getModelHandle() != 0L && draw.model.hasPreparedFirstPersonPose();
+        boolean ready = hasUsableDeferredDraw(player, gunStack);
         if (!ready && draw != null) {
             diagnose("原版手臂未抑制: playerSame={}, stackSameObject={}, stackSameContent={}, prepared={}",
                     draw.player == player, draw.gunStack == gunStack,
@@ -65,6 +115,13 @@ public final class TaczFirstPersonPostRenderer {
                     draw.model.hasPreparedFirstPersonPose());
         }
         return ready;
+    }
+
+    private static boolean hasUsableDeferredDraw(Object player, Object gunStack) {
+        DeferredDraw draw = DEFERRED_DRAW.get();
+        return draw != null && draw.player == player
+                && TaczFirstPersonFrameSnapshot.matchesGunStack(draw.gunStack, gunStack)
+                && draw.model.getModelHandle() != 0L && draw.model.hasPreparedFirstPersonPose();
     }
 
     /** TaCZ wrapper 的 RETURN 唯一调用入口。 */
@@ -114,9 +171,11 @@ public final class TaczFirstPersonPostRenderer {
                 LOGGER.warn("TaCZ 双臂目标已提交，但 prepared MMD 姿态刷新失败，frame={}", snapshot.frameId());
             }
 
-            RenderSystem.setShader(GameRenderer::getRendertypeEntityTranslucentShader);
-            draw.model.render(draw.player, draw.pose.bodyYaw, draw.pose.bodyPitch, draw.pose.translation,
-                    draw.tickDelta, draw.poseStack, draw.packedLight, RenderScene.FIRST_PERSON);
+            // TaCZ RETURN 可能紧跟 BER/OBJ/实例化批次，延后绘制必须拥有独立且可恢复的 GL 状态。
+            try (TaczDeferredRenderState ignored = TaczDeferredRenderState.begin()) {
+                draw.model.render(draw.player, draw.pose.bodyYaw, draw.pose.bodyPitch, draw.pose.translation,
+                        draw.tickDelta, draw.poseStack, draw.packedLight, RenderScene.FIRST_PERSON);
+            }
             FirstPersonManager.postRender(modelHandle, draw.player, draw.tickDelta);
         } finally {
             targetPort.clearTaczArmTargets(modelHandle);
@@ -185,6 +244,14 @@ public final class TaczFirstPersonPostRenderer {
         copy.last().pose().set(source.last().pose());
         copy.last().normal().set(source.last().normal());
         return copy;
+    }
+
+    /** 与 LevelRenderer 实体入口一致，只建立“实体插值位置减相机位置”的根平移。 */
+    static PoseStack createEntityRootPose(double entityX, double entityY, double entityZ,
+                                          double cameraX, double cameraY, double cameraZ) {
+        PoseStack poseStack = new PoseStack();
+        poseStack.translate(entityX - cameraX, entityY - cameraY, entityZ - cameraZ);
+        return poseStack;
     }
 
     private static boolean isFinite(Matrix4f matrix) {

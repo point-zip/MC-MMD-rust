@@ -71,16 +71,20 @@ public final class TaczFirstPersonFrameSnapshot {
     }
 
     /**
-     * TaCZ 可能把主手物品复制后传入渲染器；同帧匹配必须比较完整物品内容，不能依赖 Java 对象地址。
-     * 非 Minecraft 对象只用于隔离测试，仍保持严格身份匹配。
+     * TaCZ 可能在开火时复制枪械栈并更新弹药等动态标签；同帧所有权只绑定物品类型。
+     * 空栈和不同物品仍拒绝，非 Minecraft 对象只用于隔离测试并保持严格身份匹配。
      */
     static boolean matchesGunStack(Object expected, Object actual) {
         if (expected == actual) {
             return true;
         }
-        return expected instanceof ItemStack expectedStack
-                && actual instanceof ItemStack actualStack
-                && ItemStack.matches(expectedStack, actualStack);
+        if (!(expected instanceof ItemStack expectedStack)
+                || !(actual instanceof ItemStack actualStack)
+                || expectedStack.isEmpty()
+                || actualStack.isEmpty()) {
+            return false;
+        }
+        return expectedStack.is(actualStack.getItem());
     }
 
     private static boolean isFinite(Matrix4f matrix) {

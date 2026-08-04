@@ -1,24 +1,22 @@
 package com.shiroha.mmdskin.compat.tacz;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.joml.Quaternionf;
 import org.junit.jupiter.api.Test;
 
-/** 验证第三人称相对旋转和 JNI 数据布局。 */
+/** 验证第三人称绝对姿态和 JNI 数据布局。 */
 class TaczThirdPersonArmPoseTest {
     private static final float EPSILON = 1.0e-5f;
 
     @Test
-    void relativeRotationRemovesTheWeaponHoldBaseline() {
-        Quaternionf baseline = new Quaternionf().rotationY(0.25f);
-        Quaternionf expectedDelta = new Quaternionf().rotationY(0.4f);
-        Quaternionf current = new Quaternionf(baseline).mul(expectedDelta);
+    void identityIsAValidAbsoluteArmPose() {
+        TaczThirdPersonArmPose pose = new TaczThirdPersonArmPose(
+                new Quaternionf(), new Quaternionf(), 0b11);
 
-        Quaternionf actual = TaczThirdPersonArmPose.relative(baseline, current);
-
-        assertQuaternionEquals(expectedDelta, actual);
+        assertTrue(pose.isValid());
+        assertEquals(0b11, pose.validMask());
     }
 
     @Test
@@ -36,16 +34,10 @@ class TaczThirdPersonArmPoseTest {
 
     @Test
     void invalidQuaternionIsRejected() {
-        assertNull(TaczThirdPersonArmPose.relative(
-                new Quaternionf(), new Quaternionf(Float.NaN, 0.0f, 0.0f, 1.0f)));
+        TaczThirdPersonArmPose pose = new TaczThirdPersonArmPose(
+                new Quaternionf(Float.NaN, 0.0f, 0.0f, 1.0f), null, 0b01);
+        assertEquals(0, pose.validMask());
         assertEquals(0, new TaczThirdPersonArmPose(new Quaternionf(0.0f, 0.0f, 0.0f, 0.0f),
                 null, 0b01).validMask());
-    }
-
-    private static void assertQuaternionEquals(Quaternionf expected, Quaternionf actual) {
-        assertEquals(expected.x, actual.x, EPSILON);
-        assertEquals(expected.y, actual.y, EPSILON);
-        assertEquals(expected.z, actual.z, EPSILON);
-        assertEquals(expected.w, actual.w, EPSILON);
     }
 }

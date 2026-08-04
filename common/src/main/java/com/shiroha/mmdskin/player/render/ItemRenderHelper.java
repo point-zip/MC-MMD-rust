@@ -4,6 +4,7 @@ package com.shiroha.mmdskin.player.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.shiroha.mmdskin.bridge.runtime.NativeMatrixPort;
 import com.shiroha.mmdskin.compat.tacz.TaczGunDetector;
+import com.shiroha.mmdskin.compat.tacz.TaczThirdPersonGunTransform;
 import com.shiroha.mmdskin.config.ModelConfigData;
 import com.shiroha.mmdskin.model.runtime.ManagedModel;
 import com.shiroha.mmdskin.player.runtime.FirstPersonManager;
@@ -133,6 +134,7 @@ public class ItemRenderHelper {
         matrixStack.pushPose();
         matrixStack.last().pose().mul(convertToMatrix4f(runtimeBridge, handMat, model.entityState().matBuffer));
 
+        TaczThirdPersonGunTransform.apply(matrixStack, hand, itemStack);
         matrixStack.mulPose(new Quaternionf().rotateX(90.0f * DEG_TO_RAD));
         matrixStack.mulPose(new Quaternionf().rotateY(180.0f * DEG_TO_RAD));
 

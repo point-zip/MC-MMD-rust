@@ -31,7 +31,7 @@ pub(crate) fn take_tacz_arm_targets(model: i64) -> Option<TaczArmTargets> {
         .remove(&model)
 }
 
-/// 供主线程取走当前更新帧的第三人称增量；未更新帧不会复用旧值。
+/// 供主线程取走当前更新帧的第三人称绝对上臂姿态；未更新帧不会复用旧值。
 pub(crate) fn take_tacz_third_person_arm_rotations(
     model: i64,
 ) -> Option<TaczThirdPersonArmRotations> {

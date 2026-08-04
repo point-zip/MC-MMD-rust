@@ -1,8 +1,11 @@
 //! MMD 运行时模型
 
 use crate::animation::{AnimationLayerManager, VmdAnimation};
-use crate::model::tacz_arm_targets::{apply_tacz_arm_targets, TaczArmApplyOutcome, TaczArmTargets};
-use crate::model::tacz_third_person_arms::{TaczThirdPersonArmCache, TaczThirdPersonArmRotations};
+use crate::model::tacz_arm_targets::{
+    apply_tacz_arm_targets, apply_tacz_third_person_arm_rotations, TaczArmApplyOutcome,
+    TaczArmSolverCache, TaczArmTargets,
+};
+use crate::model::tacz_third_person_arms::TaczThirdPersonArmRotations;
 use crate::morph::MorphManager;
 use crate::physics::MMDPhysics;
 use crate::skeleton::BoneManager;
@@ -221,8 +224,9 @@ pub struct MmdModel {
     vr_ik_solver: VrIkSolver,
     /// 最新一帧 VR 调试遥测
     vr_debug_state: VrDebugState,
+    /// TaCZ 第一人称腕链缓存，骨名仅首次解析。
+    tacz_arm_solver_cache: TaczArmSolverCache,
     /// TaCZ 第三人称仅首次解析左右上臂骨索引。
-    tacz_third_person_arm_cache: TaczThirdPersonArmCache,
 
     // ======== 矩阵插值过渡 ========
     /// 缓存的蒙皮矩阵（过渡开始时的状态）
@@ -311,7 +315,7 @@ impl MmdModel {
             vr_ik_strength: 1.0,
             vr_ik_solver: VrIkSolver::new(),
             vr_debug_state: VrDebugState::default(),
-            tacz_third_person_arm_cache: TaczThirdPersonArmCache::default(),
+            tacz_arm_solver_cache: TaczArmSolverCache::default(),
             transition_matrices: Vec::new(),
             transition_progress: 0.0,
             transition_duration: 0.0,
@@ -2511,10 +2515,17 @@ impl MmdModel {
         let mut tacz_outcome = TaczArmApplyOutcome::default();
         if !self.vr_enabled {
             if let Some(targets) = targets {
-                tacz_outcome = apply_tacz_arm_targets(&mut self.bone_manager, targets);
+                tacz_outcome = apply_tacz_arm_targets(
+                    &mut self.bone_manager,
+                    &mut self.tacz_arm_solver_cache,
+                    targets,
+                );
             } else if let Some(rotations) = third_person_rotations {
-                self.tacz_third_person_arm_cache
-                    .apply(&mut self.bone_manager, rotations);
+                tacz_outcome = apply_tacz_third_person_arm_rotations(
+                    &mut self.bone_manager,
+                    &mut self.tacz_arm_solver_cache,
+                    rotations,
+                );
             }
         }
 

@@ -180,7 +180,10 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_UpdateModel(
     let model_handle = model;
     let targets = take_tacz_arm_targets(model);
     let third_person_rotations = take_tacz_third_person_arm_rotations(model);
-    let received_mask = targets.map_or(0, |value| value.valid_mask());
+    let received_mask = targets.map_or_else(
+        || third_person_rotations.map_or(0, |value| value.valid_mask()),
+        |value| value.valid_mask(),
+    );
     let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
     if let Some(model_arc) = models.get(&model) {
         let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
@@ -2449,7 +2452,10 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_UpdateAnimationOnly(
     let model_handle = model;
     let targets = take_tacz_arm_targets(model);
     let third_person_rotations = take_tacz_third_person_arm_rotations(model);
-    let received_mask = targets.map_or(0, |value| value.valid_mask());
+    let received_mask = targets.map_or_else(
+        || third_person_rotations.map_or(0, |value| value.valid_mask()),
+        |value| value.valid_mask(),
+    );
     let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
     if let Some(model_arc) = models.get(&model) {
         let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());

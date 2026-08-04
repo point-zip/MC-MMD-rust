@@ -7,9 +7,11 @@
 use glam::{Mat4, Quat, Vec3};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::model::tacz_third_person_arms::TaczThirdPersonArmRotations;
 use crate::skeleton::BoneManager;
 
 const EPSILON: f32 = 1.0e-4;
+const THIRD_PERSON_MAX_REACH_RATIO: f32 = 0.95;
 pub const DIAGNOSTIC_FLOAT_COUNT: usize = 24;
 const SIDE_DIAGNOSTIC_STRIDE: usize = 12;
 const DIAGNOSTIC_LIMIT: usize = 16;
@@ -66,6 +68,45 @@ pub struct TaczArmTargets {
 pub struct TaczArmApplyOutcome {
     pub applied_mask: u8,
     pub diagnostics: [f32; DIAGNOSTIC_FLOAT_COUNT],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ArmChain {
+    arm: Option<usize>,
+    elbow: Option<usize>,
+    wrist: Option<usize>,
+    attachment: Option<usize>,
+}
+
+/// 按模型实例缓存 TaCZ 所需腕链，避免在动画热路径逐帧扫描骨名。
+#[derive(Debug, Default)]
+pub struct TaczArmSolverCache {
+    left: ArmChain,
+    right: ArmChain,
+    resolved: bool,
+}
+
+impl TaczArmSolverCache {
+    fn resolve(&mut self, bones: &BoneManager) {
+        if self.resolved {
+            return;
+        }
+        self.left = resolve_chain(
+            bones,
+            LEFT_ARM_NAMES,
+            LEFT_ELBOW_NAMES,
+            LEFT_WRIST_NAMES,
+            LEFT_ATTACH_NAMES,
+        );
+        self.right = resolve_chain(
+            bones,
+            RIGHT_ARM_NAMES,
+            RIGHT_ELBOW_NAMES,
+            RIGHT_WRIST_NAMES,
+            RIGHT_ATTACH_NAMES,
+        );
+        self.resolved = true;
+    }
 }
 
 impl Default for TaczArmApplyOutcome {
@@ -127,38 +168,90 @@ pub fn is_valid_target_matrix(matrix: Mat4) -> bool {
 /// 求解器只写入上臂、肘部和手首，不会移动模型根、躯干、腿或头。
 pub fn apply_tacz_arm_targets(
     bones: &mut BoneManager,
+    cache: &mut TaczArmSolverCache,
     targets: TaczArmTargets,
 ) -> TaczArmApplyOutcome {
+    cache.resolve(bones);
     let mut outcome = TaczArmApplyOutcome::default();
     if let Some(left) = targets.left {
-        if let Some(diagnostic) = apply_side(
-            bones,
-            left,
-            "左",
-            LEFT_ARM_NAMES,
-            LEFT_ELBOW_NAMES,
-            LEFT_WRIST_NAMES,
-            LEFT_ATTACH_NAMES,
-        ) {
+        if let Some(diagnostic) = apply_side(bones, left, "左", cache.left) {
             outcome.applied_mask |= 0b01;
             write_side_diagnostic(&mut outcome.diagnostics, 0, diagnostic);
         }
     }
     if let Some(right) = targets.right {
-        if let Some(diagnostic) = apply_side(
-            bones,
-            right,
-            "右",
-            RIGHT_ARM_NAMES,
-            RIGHT_ELBOW_NAMES,
-            RIGHT_WRIST_NAMES,
-            RIGHT_ATTACH_NAMES,
-        ) {
+        if let Some(diagnostic) = apply_side(bones, right, "右", cache.right) {
             outcome.applied_mask |= 0b10;
             write_side_diagnostic(&mut outcome.diagnostics, SIDE_DIAGNOSTIC_STRIDE, diagnostic);
         }
     }
     outcome
+}
+
+/// 把 TaCZ 原版上臂绝对姿态重建为 MMD 腕点，再复用同一套双骨 IK。
+///
+/// TaCZ 第三人称没有公开腕部锚点，因此目标只采用其上臂方向；原版手臂是完整
+/// 12 像素直臂，目标距离使用 MMD 总臂长的 95%，避免继承弯曲 VMD 的短肩腕距离。
+pub fn apply_tacz_third_person_arm_rotations(
+    bones: &mut BoneManager,
+    cache: &mut TaczArmSolverCache,
+    rotations: TaczThirdPersonArmRotations,
+) -> TaczArmApplyOutcome {
+    cache.resolve(bones);
+    // 必须先重建双侧目标，再写入任一骨链，避免左臂更新影响右臂输入几何。
+    let targets = TaczArmTargets {
+        left: rotations
+            .left
+            .and_then(|rotation| rebuild_attachment_target(bones, cache.left, rotation)),
+        right: rotations
+            .right
+            .and_then(|rotation| rebuild_attachment_target(bones, cache.right, rotation)),
+    };
+    apply_tacz_arm_targets(bones, cache, targets)
+}
+
+fn rebuild_attachment_target(
+    bones: &BoneManager,
+    chain: ArmChain,
+    tacz_rotation: Quat,
+) -> Option<Mat4> {
+    let (Some(arm), Some(elbow), Some(wrist)) = (chain.arm, chain.elbow, chain.wrist) else {
+        return None;
+    };
+    let arm_matrix = bones.get_global_transform(arm);
+    let elbow_matrix = bones.get_global_transform(elbow);
+    let wrist_matrix = bones.get_global_transform(wrist);
+    let arm_position = translation(arm_matrix);
+    let elbow_position = translation(elbow_matrix);
+    let wrist_position = translation(wrist_matrix);
+    let upper_length = (elbow_position - arm_position).length();
+    let lower_length = (wrist_position - elbow_position).length();
+    let max_reach = upper_length + lower_length;
+    let direction = minecraft_arm_direction_to_mmd(tacz_rotation * Vec3::Y);
+    if max_reach < EPSILON || direction.length_squared() < EPSILON {
+        return None;
+    }
+
+    // 留出 5% 弯肘余量，防止两骨链完全共线时肘部平面失去稳定方向。
+    let target_distance = max_reach * THIRD_PERSON_MAX_REACH_RATIO;
+    let target_wrist_position = arm_position + direction * target_distance;
+    let wrist_rotation = rotation(wrist_matrix);
+    let wrist_to_attachment = chain
+        .attachment
+        .map(|index| wrist_matrix.inverse() * bones.get_global_transform(index))
+        .unwrap_or(Mat4::IDENTITY);
+    let target_attachment_position =
+        target_wrist_position + wrist_rotation * translation(wrist_to_attachment);
+    Some(Mat4::from_rotation_translation(
+        wrist_rotation,
+        target_attachment_position,
+    ))
+}
+
+fn minecraft_arm_direction_to_mmd(direction: Vec3) -> Vec3 {
+    // Minecraft ModelPart 的 Y 轴向下、Z 轴朝向也与运行时 MMD 模型空间相反。
+    // 该转换等价于绕局部 X 轴旋转 180°；X 轴保持不变，左右手不会互换。
+    Vec3::new(direction.x, -direction.y, -direction.z).normalize_or_zero()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -176,14 +269,11 @@ fn apply_side(
     bones: &mut BoneManager,
     attachment_target: Mat4,
     side: &str,
-    arm_names: &[&str],
-    elbow_names: &[&str],
-    wrist_names: &[&str],
-    attachment_names: &[&str],
+    chain: ArmChain,
 ) -> Option<SideDiagnostic> {
-    let arm = find_first(bones, arm_names);
-    let elbow = find_first(bones, elbow_names);
-    let wrist = find_first(bones, wrist_names);
+    let arm = chain.arm;
+    let elbow = chain.elbow;
+    let wrist = chain.wrist;
     let (Some(arm), Some(elbow), Some(wrist)) = (arm, elbow, wrist) else {
         diagnose(|| {
             format!(
@@ -197,7 +287,7 @@ fn apply_side(
     let arm_matrix = bones.get_global_transform(arm);
     let elbow_matrix = bones.get_global_transform(elbow);
     let wrist_matrix = bones.get_global_transform(wrist);
-    let attachment = find_first(bones, attachment_names);
+    let attachment = chain.attachment;
     let wrist_target = desired_wrist_target(bones, wrist_matrix, attachment_target, attachment);
     let target_distance = (translation(wrist_target) - translation(arm_matrix)).length();
     let max_reach = (translation(elbow_matrix) - translation(arm_matrix)).length()
@@ -341,6 +431,21 @@ fn find_first(bones: &BoneManager, names: &[&str]) -> Option<usize> {
     names.iter().find_map(|name| bones.find_bone_by_name(name))
 }
 
+fn resolve_chain(
+    bones: &BoneManager,
+    arm_names: &[&str],
+    elbow_names: &[&str],
+    wrist_names: &[&str],
+    attachment_names: &[&str],
+) -> ArmChain {
+    ArmChain {
+        arm: find_first(bones, arm_names),
+        elbow: find_first(bones, elbow_names),
+        wrist: find_first(bones, wrist_names),
+        attachment: find_first(bones, attachment_names),
+    }
+}
+
 fn solve_two_bone_positions(
     root: Vec3,
     elbow: Vec3,
@@ -448,5 +553,82 @@ mod tests {
 
         assert!(rotation(target).dot(wrist_rotation).abs() > 1.0 - 1.0e-5);
         assert!((translation(final_attachment) - translation(attachment_target)).length() < 1.0e-5);
+    }
+
+    #[test]
+    fn third_person_target_uses_absolute_direction_and_full_arm_reach() {
+        let mut bones = BoneManager::new();
+        let mut arm = crate::skeleton::BoneLink::new("左腕".to_string());
+        arm.initial_position = Vec3::ZERO;
+        let mut elbow = crate::skeleton::BoneLink::new("左ひじ".to_string());
+        elbow.parent_index = 0;
+        elbow.initial_position = Vec3::X;
+        let mut wrist = crate::skeleton::BoneLink::new("左手首".to_string());
+        wrist.parent_index = 1;
+        wrist.initial_position = Vec3::new(1.5, 0.5, 0.0);
+        bones.add_bone(arm);
+        bones.add_bone(elbow);
+        bones.add_bone(wrist);
+        bones.build_hierarchy();
+
+        let chain = resolve_chain(
+            &bones,
+            LEFT_ARM_NAMES,
+            LEFT_ELBOW_NAMES,
+            LEFT_WRIST_NAMES,
+            LEFT_ATTACH_NAMES,
+        );
+        let target = rebuild_attachment_target(
+            &bones,
+            chain,
+            // Minecraft -90° 绕 Z 轴会把手臂局部 +Y 转向 +X；坐标基转换不翻转左右轴。
+            Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
+        )
+        .expect("third-person target");
+
+        let expected_distance =
+            (1.0 + Vec3::new(0.5, 0.5, 0.0).length()) * THIRD_PERSON_MAX_REACH_RATIO;
+        assert!((translation(target) - Vec3::X * expected_distance).length() < 1.0e-4);
+    }
+
+    #[test]
+    fn third_person_target_avoids_a_fully_straight_chain() {
+        let mut bones = BoneManager::new();
+        let mut arm = crate::skeleton::BoneLink::new("左腕".to_string());
+        arm.initial_position = Vec3::ZERO;
+        let mut elbow = crate::skeleton::BoneLink::new("左ひじ".to_string());
+        elbow.parent_index = 0;
+        elbow.initial_position = Vec3::X;
+        let mut wrist = crate::skeleton::BoneLink::new("左手首".to_string());
+        wrist.parent_index = 1;
+        wrist.initial_position = Vec3::new(2.0, 0.0, 0.0);
+        bones.add_bone(arm);
+        bones.add_bone(elbow);
+        bones.add_bone(wrist);
+        bones.build_hierarchy();
+
+        let chain = resolve_chain(
+            &bones,
+            LEFT_ARM_NAMES,
+            LEFT_ELBOW_NAMES,
+            LEFT_WRIST_NAMES,
+            LEFT_ATTACH_NAMES,
+        );
+        let target = rebuild_attachment_target(
+            &bones,
+            chain,
+            // 与绝对方向测试使用相同的非退化第三人称手臂方向。
+            Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
+        )
+        .unwrap();
+        assert!((translation(target).length() - 1.9).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn minecraft_arm_basis_flips_vertical_and_depth_without_swapping_sides() {
+        let converted = minecraft_arm_direction_to_mmd(Vec3::new(2.0, 3.0, 4.0));
+        let expected = Vec3::new(2.0, -3.0, -4.0).normalize();
+
+        assert!(converted.abs_diff_eq(expected, 1.0e-6));
     }
 }

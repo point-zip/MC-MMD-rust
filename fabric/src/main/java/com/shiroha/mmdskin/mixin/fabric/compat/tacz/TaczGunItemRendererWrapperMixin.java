@@ -25,6 +25,8 @@ public abstract class TaczGunItemRendererWrapperMixin {
                                         CallbackInfo ci) {
         TaczFirstPersonFrameSnapshot.beginFrame(player, stack, poseStack.last().pose(),
                 Minecraft.getInstance().isSameThread());
+        // 特殊方块渲染跳过本地玩家实体入口时，在枪械节点捕获前恢复 MMD 手臂所有权。
+        TaczFirstPersonPostRenderer.ensureDeferredAtTaczHead(player, stack, partialTick, light);
     }
 
     // TaCZ 枪械和 buffer 全部完成后才消费锚点，避免在功能节点内重入完整 MMD renderer。

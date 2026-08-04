@@ -2,7 +2,7 @@ package com.shiroha.mmdskin.compat.tacz;
 
 import org.joml.Quaternionf;
 
-/** TaCZ 第三人称手臂相对腰射基线的局部旋转增量。 */
+/** TaCZ 第三人称左右上臂的绝对局部姿态。 */
 public record TaczThirdPersonArmPose(Quaternionf left, Quaternionf right, int validMask) {
     public TaczThirdPersonArmPose {
         left = copyNormalized(left);
@@ -16,22 +16,19 @@ public record TaczThirdPersonArmPose(Quaternionf left, Quaternionf right, int va
         return validMask != 0;
     }
 
+    static float angleDegrees(Quaternionf rotation) {
+        Quaternionf normalized = copyNormalized(rotation);
+        if (normalized == null) return Float.NaN;
+        float absoluteW = Math.min(1.0f, Math.abs(normalized.w));
+        return (float) Math.toDegrees(2.0 * Math.acos(absoluteW));
+    }
+
     /** JNI 布局为左、右各 xyzw 四项。 */
     public float[] toNativePacket() {
         float[] output = new float[8];
         write(output, 0, left);
         write(output, 4, right);
         return output;
-    }
-
-    static Quaternionf relative(Quaternionf baseline, Quaternionf current) {
-        Quaternionf base = copyNormalized(baseline);
-        Quaternionf value = copyNormalized(current);
-        if (base == null || value == null) return null;
-        Quaternionf delta = base.conjugate(new Quaternionf()).mul(value).normalize();
-        // q 与 -q 表达同一旋转，统一到同一半球减少帧间跳变。
-        if (delta.w < 0.0f) delta.mul(-1.0f);
-        return copyNormalized(delta);
     }
 
     private static Quaternionf copyNormalized(Quaternionf value) {

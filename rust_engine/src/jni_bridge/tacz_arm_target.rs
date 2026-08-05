@@ -11,11 +11,7 @@ use jni::JNIEnv;
 use once_cell::sync::Lazy;
 
 use crate::model::tacz_arm_targets::{TaczArmApplyOutcome, TaczArmTargets, DIAGNOSTIC_FLOAT_COUNT};
-use crate::model::tacz_third_person_arms::TaczThirdPersonArmRotations;
-
 static PENDING_TARGETS: Lazy<Mutex<HashMap<i64, TaczArmTargets>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-static PENDING_THIRD_PERSON_ROTATIONS: Lazy<Mutex<HashMap<i64, TaczThirdPersonArmRotations>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static LAST_APPLY_RESULTS: Lazy<Mutex<HashMap<i64, i32>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -26,16 +22,6 @@ static LAST_APPLY_DIAGNOSTICS: Lazy<Mutex<HashMap<i64, [f32; DIAGNOSTIC_FLOAT_CO
 ///
 pub(crate) fn take_tacz_arm_targets(model: i64) -> Option<TaczArmTargets> {
     PENDING_TARGETS
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(&model)
-}
-
-/// 供主线程取走当前更新帧的第三人称绝对上臂姿态；未更新帧不会复用旧值。
-pub(crate) fn take_tacz_third_person_arm_rotations(
-    model: i64,
-) -> Option<TaczThirdPersonArmRotations> {
-    PENDING_THIRD_PERSON_ROTATIONS
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .remove(&model)
@@ -152,61 +138,6 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_ClearTaczArmTargets(
     clear_tacz_arm_targets(model);
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_SetTaczThirdPersonArmRotations(
-    env: JNIEnv,
-    _class: JClass,
-    model: jlong,
-    rotations: JFloatArray,
-    valid_mask: jint,
-) -> jboolean {
-    if model == 0 {
-        return 0;
-    }
-    let Ok(length) = env.get_array_length(&rotations) else {
-        clear_tacz_third_person_arm_rotations(model);
-        return 0;
-    };
-    if length != 8 {
-        clear_tacz_third_person_arm_rotations(model);
-        return 0;
-    }
-    let mut values = [0.0f32; 8];
-    if env
-        .get_float_array_region(&rotations, 0, &mut values)
-        .is_err()
-    {
-        clear_tacz_third_person_arm_rotations(model);
-        return 0;
-    }
-    let Some(value) = TaczThirdPersonArmRotations::from_xyzw_slice(&values, valid_mask as u8)
-    else {
-        clear_tacz_third_person_arm_rotations(model);
-        return 0;
-    };
-    PENDING_THIRD_PERSON_ROTATIONS
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(model, value);
-    1
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_ClearTaczThirdPersonArmRotations(
-    _env: JNIEnv,
-    _class: JClass,
-    model: jlong,
-) {
-    clear_tacz_third_person_arm_rotations(model);
-}
-
-pub(crate) fn clear_tacz_third_person_arm_rotations(model: i64) {
-    PENDING_THIRD_PERSON_ROTATIONS
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(&model);
-}
-
 pub(crate) fn clear_tacz_arm_targets(model: i64) {
     PENDING_TARGETS
         .lock()
@@ -257,20 +188,5 @@ mod tests {
         );
         assert_eq!(take_tacz_arm_apply_result(id), 0b10_11);
         assert_eq!(take_tacz_arm_apply_result(id), 0);
-    }
-
-    #[test]
-    fn third_person_rotation_is_consumed_once() {
-        let id = 993;
-        PENDING_THIRD_PERSON_ROTATIONS.lock().unwrap().insert(
-            id,
-            TaczThirdPersonArmRotations::from_xyzw_slice(
-                &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-                0b11,
-            )
-            .unwrap(),
-        );
-        assert!(take_tacz_third_person_arm_rotations(id).is_some());
-        assert!(take_tacz_third_person_arm_rotations(id).is_none());
     }
 }

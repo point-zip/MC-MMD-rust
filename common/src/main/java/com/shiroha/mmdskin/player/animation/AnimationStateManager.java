@@ -19,8 +19,8 @@ public class AnimationStateManager {
 
     private static final float TRANSITION_TIME = 0.25f;
     static final String DRINK_ANIMATION = "Drink";
-    // 使用版本化名称，避免游戏目录中已提取的旧动作阻止新 ADS 动作生效。
-    static final String TACZ_RIFLE_ADS_ANIMATION = "tacz_hold_rifle_ads_v4";
+    // 使用版本化名称，确保已提取 v4 的游戏目录仍会获得重新录制的动作。
+    static final String TACZ_RIFLE_ADS_ANIMATION = "tacz_hold_rifle_ads_v5";
 
     public static void updateAnimationState(AbstractClientPlayer player, ManagedModel model) {
         if (model.entityState().playCustomAnim) {

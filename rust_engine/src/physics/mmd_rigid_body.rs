@@ -44,8 +44,8 @@ pub struct MmdRigidBodyData {
     pub physics_mode: PhysicsMode,
     /// 碰撞组
     pub group: u8,
-    /// 碰撞掩码
-    pub group_mask: u16,
+    /// Bullet 允许碰撞的组掩码
+    pub collision_mask: u16,
     /// 偏移矩阵 = B0⁻¹ * R0（刚体在骨骼局部空间的变换，saba 右乘约定）
     pub body_offset_matrix: Mat4,
     /// 偏移矩阵的逆 = R0⁻¹ * B0
@@ -95,7 +95,9 @@ impl MmdRigidBodyData {
             bone_index: pmx_rb.bone_index,
             physics_mode,
             group: pmx_rb.group,
-            group_mask: pmx_rb.un_collision_group_flag,
+            // PMX 保存的是“不碰撞组”，Bullet 接收的是“允许碰撞组”，
+            // 两者语义相反，因此必须在 16 位组范围内取反。
+            collision_mask: pmx_collision_mask(pmx_rb.un_collision_group_flag),
             body_offset_matrix,
             body_offset_matrix_inverse,
             initial_transform: rb_world_matrix,
@@ -166,5 +168,30 @@ impl MmdRigidBodyData {
         result.w_axis.y = bone_position.y;
         result.w_axis.z = bone_position.z;
         result
+    }
+}
+
+/// 将 PMX 的“不碰撞组”标志转换为 Bullet 的“允许碰撞组”掩码。
+fn pmx_collision_mask(un_collision_group_flag: u16) -> u16 {
+    !un_collision_group_flag
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pmx_collision_mask;
+
+    #[test]
+    fn pmx_collision_mask_allows_all_groups_when_none_are_excluded() {
+        assert_eq!(pmx_collision_mask(0x0000), 0xFFFF);
+    }
+
+    #[test]
+    fn pmx_collision_mask_excludes_marked_groups() {
+        assert_eq!(pmx_collision_mask(0x0001), 0xFFFE);
+    }
+
+    #[test]
+    fn pmx_collision_mask_disallows_all_groups_when_all_are_excluded() {
+        assert_eq!(pmx_collision_mask(0xFFFF), 0x0000);
     }
 }

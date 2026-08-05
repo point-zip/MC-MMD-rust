@@ -23,16 +23,6 @@ class NativeRuntimeBridgeTest {
         assertFalse(NativeRuntimeBridge.isValidTaczArmTargetPacket(valid, 0b11));
     }
 
-    @Test
-    void taczThirdPersonPacketValidatesOnlySelectedRotations() {
-        float[] rotations = {0.0f, 0.0f, 0.0f, 1.0f, Float.NaN, 0.0f, 0.0f, 1.0f};
-        assertTrue(NativeRuntimeBridge.isValidTaczThirdPersonRotationPacket(rotations, 0b01));
-        assertFalse(NativeRuntimeBridge.isValidTaczThirdPersonRotationPacket(rotations, 0b11));
-        assertFalse(NativeRuntimeBridge.isValidTaczThirdPersonRotationPacket(new float[8], 0b01));
-        assertFalse(NativeRuntimeBridge.isValidTaczThirdPersonRotationPacket(new float[7], 0b01));
-        assertFalse(NativeRuntimeBridge.isValidTaczThirdPersonRotationPacket(rotations, 0));
-    }
-
     private static float[] twoIdentityMatrices() {
         float[] matrices = new float[32];
         for (int offset : new int[]{0, 16}) {

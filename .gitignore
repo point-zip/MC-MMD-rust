@@ -123,3 +123,5 @@ rust_engine/deps/PhysX/
 rust_engine/deps/bullet3/
 /.gradle-tacz/
 /.tmp-tacz/
+/.codex-tmp/
+/multi_platform_optimization_plan.md

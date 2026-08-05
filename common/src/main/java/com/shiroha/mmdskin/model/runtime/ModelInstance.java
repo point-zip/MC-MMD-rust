@@ -57,6 +57,11 @@ public interface ModelInstance {
         return 0L;
     }
 
+    /** 返回实例实际使用的渲染后端，供调试 HUD 展示回退结果。 */
+    default String getRenderBackendName() {
+        return "UNKNOWN";
+    }
+
     long getRamUsage();
 
     default long modelHandle() {

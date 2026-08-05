@@ -117,6 +117,10 @@ public class GpuSkinningModelInstance extends BaseModelInstance {
 
     volatile boolean initialized;
     long lastGpuUploadRevision = -1L;
+    long lastBoneUploadBytes;
+    long lastVertexMorphUploadBytes;
+    long lastUvMorphUploadBytes;
+    long lastMaterialMorphTransferBytes;
     int lastBlockBrightness = Integer.MIN_VALUE;
     int lastSkyBrightness = Integer.MIN_VALUE;
 
@@ -630,6 +634,11 @@ public class GpuSkinningModelInstance extends BaseModelInstance {
     @Override
     public long getRamUsage() {
         return GpuSkinningModelLifecycle.getRamUsage(this);
+    }
+
+    @Override
+    public String getRenderBackendName() {
+        return "GPU_COMPUTE";
     }
 
     @Override

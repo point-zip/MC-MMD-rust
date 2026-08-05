@@ -1,11 +1,10 @@
 //! MMD 运行时模型
 
 use crate::animation::{AnimationLayerManager, VmdAnimation};
+use crate::model::hand_attachment::find_hand_attachment;
 use crate::model::tacz_arm_targets::{
-    apply_tacz_arm_targets, apply_tacz_third_person_arm_rotations, TaczArmApplyOutcome,
-    TaczArmSolverCache, TaczArmTargets,
+    apply_tacz_arm_targets, TaczArmApplyOutcome, TaczArmSolverCache, TaczArmTargets,
 };
-use crate::model::tacz_third_person_arms::TaczThirdPersonArmRotations;
 use crate::morph::MorphManager;
 use crate::physics::MMDPhysics;
 use crate::skeleton::BoneManager;
@@ -1318,7 +1317,7 @@ impl MmdModel {
     /// 更新动画（每帧调用）- 多动画层版本（CPU蒙皮模式）
     #[allow(unreachable_code)]
     pub fn tick_animation(&mut self, elapsed: f32) {
-        self.tick_animation_internal(elapsed, true, None, None);
+        self.tick_animation_internal(elapsed, true, None);
         return;
         // 更新所有动画层
         self.animation_layer_manager.update(elapsed);
@@ -1698,32 +1697,33 @@ impl MmdModel {
 
     /// 获取右手矩阵
     pub fn get_right_hand_matrix(&self) -> Mat4 {
-        // 优先使用模型作者提供的物品挂点；旧模型没有挂点时保持原有手首回退行为。
-        self.get_hand_attachment_matrix(&[
+        self.get_hand_attachment_matrix(
             "Hand_Attach_R",
-            "ダミー.R",
-            "右手首",
-            "右腕",
-            "right_hand",
-            "RightHand",
-        ])
+            'R',
+            &["右手首", "右腕", "right_hand", "RightHand"],
+        )
     }
 
     /// 获取左手矩阵
     pub fn get_left_hand_matrix(&self) -> Mat4 {
-        // 左右手使用对称的严格名称，避免把另一侧或无关 Dummy 当作物品挂点。
-        self.get_hand_attachment_matrix(&[
+        self.get_hand_attachment_matrix(
             "Hand_Attach_L",
-            "ダミー.L",
-            "左手首",
-            "左腕",
-            "left_hand",
-            "LeftHand",
-        ])
+            'L',
+            &["左手首", "左腕", "left_hand", "LeftHand"],
+        )
     }
 
-    fn get_hand_attachment_matrix(&self, names: &[&str]) -> Mat4 {
-        for name in names {
+    fn get_hand_attachment_matrix(
+        &self,
+        explicit_name: &str,
+        dummy_side: char,
+        fallback_names: &[&str],
+    ) -> Mat4 {
+        // 显式挂点优先于录制时期存在多种分隔符的 MMD Dummy 命名。
+        if let Some(index) = find_hand_attachment(&self.bone_manager, explicit_name, dummy_side) {
+            return self.bone_manager.get_global_transform(index);
+        }
+        for name in fallback_names {
             if let Some(idx) = self.bone_manager.find_bone_by_name(name) {
                 return self.bone_manager.get_global_transform(idx);
             }
@@ -2359,7 +2359,7 @@ impl MmdModel {
     /// 仅更新动画（不执行 CPU 蒙皮，用于 GPU 蒙皮模式）
     #[allow(unreachable_code)]
     pub fn tick_animation_no_skinning(&mut self, elapsed: f32) {
-        self.tick_animation_internal(elapsed, false, None, None);
+        self.tick_animation_internal(elapsed, false, None);
         return;
         self.animation_layer_manager.update(elapsed);
         self.begin_animation();
@@ -2437,9 +2437,8 @@ impl MmdModel {
         elapsed: f32,
         cpu_skinning: bool,
         targets: Option<TaczArmTargets>,
-        third_person_rotations: Option<TaczThirdPersonArmRotations>,
     ) -> TaczArmApplyOutcome {
-        self.tick_animation_internal(elapsed, cpu_skinning, targets, third_person_rotations)
+        self.tick_animation_internal(elapsed, cpu_skinning, targets)
     }
 
     fn tick_animation_internal(
@@ -2447,7 +2446,6 @@ impl MmdModel {
         elapsed: f32,
         cpu_skinning: bool,
         targets: Option<TaczArmTargets>,
-        third_person_rotations: Option<TaczThirdPersonArmRotations>,
     ) -> TaczArmApplyOutcome {
         self.with_vrm_runtime_state(|model, runtime_state| {
             runtime_state.apply_inputs(model);
@@ -2511,7 +2509,8 @@ impl MmdModel {
             self.end_physics_update();
         }
 
-        // TaCZ 目标必须晚于物理与 VR 分支，避免手臂在同帧被再次覆盖。
+        // 第一人称 TaCZ 真实锚点必须晚于物理与 VR 分支，避免手臂在同帧被再次覆盖。
+        // 第三人称不提交骨骼目标，完整保留本帧 VMD 姿态。
         let mut tacz_outcome = TaczArmApplyOutcome::default();
         if !self.vr_enabled {
             if let Some(targets) = targets {
@@ -2519,12 +2518,6 @@ impl MmdModel {
                     &mut self.bone_manager,
                     &mut self.tacz_arm_solver_cache,
                     targets,
-                );
-            } else if let Some(rotations) = third_person_rotations {
-                tacz_outcome = apply_tacz_third_person_arm_rotations(
-                    &mut self.bone_manager,
-                    &mut self.tacz_arm_solver_cache,
-                    rotations,
                 );
             }
         }
@@ -3131,6 +3124,35 @@ mod tests {
             wrist_model
                 .get_right_hand_matrix()
                 .transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn hand_matrix_should_accept_common_dummy_separators() {
+        for name in ["ダミー_R", "ダミー.R", "ダミー R"] {
+            let mut model = MmdModel::new();
+            add_test_bone(&mut model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+            add_test_bone(&mut model, name, Vec3::new(2.0, 0.0, 0.0));
+            model.bone_manager.build_hierarchy();
+
+            assert_eq!(
+                model.get_right_hand_matrix().transform_point3(Vec3::ZERO),
+                Vec3::new(2.0, 0.0, 0.0),
+                "右手挂点应兼容 {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn hand_matrix_should_not_use_the_opposite_dummy_side() {
+        let mut model = MmdModel::new();
+        add_test_bone(&mut model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        add_test_bone(&mut model, "ダミー_L", Vec3::new(2.0, 0.0, 0.0));
+        model.bone_manager.build_hierarchy();
+
+        assert_eq!(
+            model.get_right_hand_matrix().transform_point3(Vec3::ZERO),
             Vec3::new(1.0, 0.0, 0.0)
         );
     }

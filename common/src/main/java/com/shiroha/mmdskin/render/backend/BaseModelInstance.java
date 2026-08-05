@@ -7,7 +7,6 @@ import com.shiroha.mmdskin.render.scene.RenderScene;
 import com.shiroha.mmdskin.render.pipeline.LivingEntityModelStateHelper;
 import com.shiroha.mmdskin.render.pipeline.RenderPerformanceProfiler;
 import com.shiroha.mmdskin.render.policy.WorldRenderPolicy;
-import com.shiroha.mmdskin.bridge.runtime.NativeTaczArmTargetPort;
 import com.shiroha.mmdskin.stage.client.camera.MMDCameraController;
 import com.shiroha.mmdskin.texture.runtime.TextureRepository;
 import com.mojang.blaze3d.platform.Window;
@@ -228,32 +227,12 @@ public abstract class BaseModelInstance implements ModelInstance {
                     vrActive);
             RenderPerformanceProfiler.get().endTimer(RenderPerformanceProfiler.SECTION_LIVING_STATE_SYNC, syncTimer);
 
-            submitTaczThirdPersonPose();
             update();
         }
         try {
             doRenderModel(entityIn, entityYaw, entityPitch, entityTrans, mat, packedLight, context);
         } finally {
             firstPersonPoseState.finishRender(context != null && context.isFirstPerson());
-        }
-    }
-
-    private void submitTaczThirdPersonPose() {
-        // TaCZ 的第三人称武器共用默认手臂姿态，MMD 直接保留 VMD。
-        // 旧版本可能残留一次性 native 覆盖，因此每个动画更新帧都明确清除。
-        if (!shouldSubmitTaczThirdPersonPose()) {
-            clearTaczThirdPersonPose();
-        }
-    }
-
-    /** 第三人称统一使用 VMD，不向 native 提交 TaCZ 程序化手臂姿态。 */
-    static boolean shouldSubmitTaczThirdPersonPose() {
-        return false;
-    }
-
-    private void clearTaczThirdPersonPose() {
-        if (nativeRenderBackendPort instanceof NativeTaczArmTargetPort targetPort && model != 0) {
-            targetPort.clearTaczThirdPersonArmRotations(model);
         }
     }
 

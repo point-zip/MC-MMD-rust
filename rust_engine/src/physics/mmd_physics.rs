@@ -113,7 +113,7 @@ impl MMDPhysics {
         for rb_data in &self.rigid_bodies {
             if let Some(ref body) = rb_data.bullet_body {
                 let group = 1i32 << (rb_data.group.min(15) as i32);
-                let mask = rb_data.group_mask as i32;
+                let mask = rb_data.collision_mask as i32;
                 self.world.add_rigid_body(body, group, mask);
             }
         }

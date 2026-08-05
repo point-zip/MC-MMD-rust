@@ -641,3 +641,232 @@ FOV、后坐力和镜头动画。远端玩家不得读取 `IClientPlayerGunOpera
 
 审批后先实施切片 B，并提供带诊断日志的测试包；切片 B 实机稳定后才进入局部网格与后置绘制，
 不再把未经运行时验证的整套方案一次性交给用户测试。
+
+# GPU 主路径、跨平台 SIMD 与 CPU 回退方案（待审批）
+
+## 结论与目标
+
+“大运算量交给 GPU、CPU 使用 SIMD”方向正确，但应按数据并行度划分职责，而不是把整套动画运行时
+迁入计算着色器。现有工程已经有 OpenGL 4.3 Compute Shader 蒙皮、顶点 Morph 和 UV Morph，当前主要
+问题是 GPU 路径仍在 CPU 物化完整 Morph 顶点、Morph 使用高显存的稠密布局、能力探测不足，以及
+第一人称裁剪仍需要 CPU 顶点结果。
+
+目标职责如下：
+
+```text
+CPU：动画采样与混合、Group/Flip 权重展开、骨骼层级、IK、Bullet 物理、材质 Morph
+GPU：顶点/UV Morph 累加、顶点蒙皮、法线变换，以及后续可选的第一人称三角形分类
+CPU 回退：与 GPU 同语义的 Morph + 蒙皮，自动向量化/SIMD，并保留标量实现
+```
+
+第一阶段不启用 `PhysicsComputeShader`。当前 GPU 物理只有 Verlet 弹簧近似实现，尚未证明与 Bullet 的
+刚体、关节、碰撞和更新顺序等价；若物理结果还要回读 CPU 继续 IK，会引入同步停顿。它应作为后续
+独立实验后端，不影响本方案落地。
+
+## 后端能力与兼容矩阵
+
+新增统一的运行时能力快照 `RenderComputeCapabilities`，在 OpenGL 上下文创建后探测一次，不用操作系统
+名称推断 GPU 能力。至少记录 OpenGL/GLSL 版本、compute shader、SSBO、最大 SSBO 尺寸、最大绑定数、
+最大 work group 数，以及着色器编译自检结果。
+
+运行模式按以下优先级选择：
+
+```text
+AUTO
+  1. OpenGL 4.3+ 且 compute/SSBO/尺寸/着色器自检全部通过 -> GPU_COMPUTE
+  2. 否则 -> CPU_VECTORIZED
+  3. 向量能力不可用或自检失败 -> CPU_SCALAR
+```
+
+平台预期而非硬编码规则：
+
+1. Windows/Linux x86-64 通常进入 GPU Compute；CPU 回退至少有 SSE2，可在运行时选择 AVX2。
+2. Windows/Linux ARM64 的 CPU 回退使用 NEON；不能把 Windows 等同于 SSE。
+3. macOS 原生 OpenGL 通常仅到 4.1，不支持 OpenGL Compute Shader，默认进入 CPU 向量化回退。
+4. Linux LoongArch64、RISC-V 等先依赖 `glam`/LLVM 自动向量化；没有经过验证的显式 SIMD 时走标量或
+   自动向量化实现，禁止编译进 x86 intrinsic。
+5. Android 当前继续禁用 GPU 蒙皮工厂，除非以后单独实现 OpenGL ES/Vulkan 后端。
+
+配置由两个布尔开关收敛为 `AUTO / GPU_COMPUTE / CPU_VECTORIZED / CPU_SCALAR`。显式选择
+`GPU_COMPUTE` 但能力不满足时仍安全回退，并只输出一次包含原因的诊断；不能因驱动或 shader 编译失败
+导致模型不可见。旧配置在迁移时映射到新模式，保持用户配置兼容。
+
+## GPU 主路径
+
+### 1. 拆分 CPU Morph 语义
+
+Rust 将当前 `update_morph_animation()` 拆为三个职责：
+
+1. 展开 Group/Flip Morph，复用固定缓冲得到最终有效权重。
+2. CPU 始终处理骨骼 Morph、材质 Morph和必要的运行时表达式。
+3. 仅 CPU 回退或第一人称 CPU 裁剪确实需要时，才物化完整 `update_positions/update_uvs`。
+
+GPU 模型的普通世界渲染每帧只跨 JNI 上传骨骼矩阵、有效 Morph 权重和材质结果，不再在 CPU 遍历并
+重置全部顶点。所有上传使用 revision：骨骼、顶点 Morph、UV Morph、材质 Morph 各自独立标记，未变化
+的数据不重复复制。
+
+### 2. Morph 改为稀疏 GPU 数据
+
+当前 `morph_count * vertex_count` 稠密数组会让显存和每顶点循环量同时快速增长。改为加载期建立稀疏
+邻接布局：
+
+```text
+vertexMorphRanges[vertex] = {offset, count}
+vertexMorphEntries[]       = {morphIndex, dx, dy, dz}
+uvMorphRanges[vertex]      = {offset, count}
+uvMorphEntries[]           = {morphIndex, du, dv}
+effectiveWeights[]         = 当前帧权重
+```
+
+compute shader 每个 invocation 只遍历当前顶点实际关联的 Morph，不再扫描所有 Morph，也不再硬截断
+顶点 Morph 128 个、UV Morph 32 个。权重判断统一为 `abs(weight) > epsilon`，修复当前 GPU 路径忽略负
+顶点 Morph 权重的问题。若稀疏数据或 SSBO 超过驱动限制，该模型单独回退 CPU，不拖累其他模型。
+
+### 3. 蒙皮与输出
+
+单次 compute dispatch 完成 Morph、位置蒙皮、法线变换和 UV 输出。静态原始顶点、权重、索引与稀疏
+Morph 数据只在模型创建时上传；每帧仅上传小型动态数据。输出 SSBO 直接作为 VBO 使用，禁止 GPU 到
+CPU 回读。对同一更新 revision 的阴影、世界、描边等多个 pass 只 dispatch 一次。
+
+首版保持每模型 dispatch，以降低改造风险；确认 CPU 提交成为瓶颈后，再评估把多个同布局实例批处理，
+不在第一阶段引入全局大缓冲和复杂生命周期。
+
+### 4. 第一人称处理
+
+第一阶段保留现有 CPU 动态索引裁剪，但只对裁剪需要的 `dynamic_vertices` 计算 Morph 与蒙皮，不能因此
+恢复整模型 CPU 顶点物化。稳定 body/head 索引预分段，仅重建边界三角形区间。
+
+第二阶段可增加纯 GPU 三角形分类与 indirect draw，但前提是目标平台支持相应能力，且不能用 GPU
+readback 获取索引数量。macOS 及不支持该能力的平台继续使用第一阶段 CPU 局部裁剪。
+
+## CPU SIMD 回退
+
+先保持一个可验证的标量参考实现，再提供向量化实现。公共入口在进程启动时选择一次函数表，帧循环内
+不反复做 CPU feature detection：
+
+```text
+x86/x86-64：SSE2 基线；运行时检测 AVX2，支持时处理更宽批次
+aarch64：NEON
+其他架构：glam + LLVM 自动向量化；必要时标量
+```
+
+Rust 使用 `cfg(target_arch)` 隔离架构代码；x86 使用 `is_x86_feature_detected!("avx2")`，所有
+`#[target_feature]` 函数由安全分派层调用。不得全局设置 `target-cpu=native`，否则发布产物可能在较老
+CPU 上触发非法指令。Windows x86-64 的 SSE2 是架构基线，但 Windows ARM64 必须走 NEON 分支。
+
+CPU 数据改为适合连续批处理的 SoA 或紧凑平铺布局，并按顶点块并行。Rayon 只在顶点数超过基准测得的
+阈值时启用，避免小模型的线程调度成本；外层多模型并行和单模型内部 Rayon 不同时无限扩张。骨骼层级、
+IK 和 Bullet 仍以正确性为先，先消除热路径 `clone()` 和堆分配，再评估局部数学的 SIMD 收益。
+
+## 回退与故障隔离
+
+回退必须按模型实例生效，而不是让一个异常模型关闭整局 GPU：
+
+1. 创建模型前检查全局 GPU 能力；不满足则直接创建 CPU 实例。
+2. 创建 GPU 资源时检查尺寸、GL error 和 shader 状态；失败则清理已创建资源，使用同一个 native model
+   handle 创建 CPU 实例，避免重新解析模型。
+3. 运行期出现 context loss、dispatch 错误或非有限输出诊断时，将实例标记为待重建，在安全帧边界切换
+   CPU；渲染调用中不边画边替换资源。
+4. CPU 向量实现启动时运行小规模参考自检；结果超差或 CPU 特性不匹配则退回标量。
+5. HUD/日志显示实际后端和回退原因，例如 `GPU_COMPUTE`、`CPU_AVX2`、`CPU_SSE2`、`CPU_NEON`、
+   `CPU_SCALAR`，便于收集不同平台问题。
+
+## 预计模块边界
+
+为避免继续扩大已超过 1000 行的 `runtime.rs`，实施时按职责拆分：
+
+```text
+rust_engine/src/model/morph_runtime.rs       CPU Morph 权重与选择性顶点物化
+rust_engine/src/skinning/scalar.rs           标量参考实现
+rust_engine/src/skinning/vectorized.rs       安全分派与通用向量路径
+rust_engine/src/skinning/x86.rs              SSE2/AVX2（仅 x86 编译）
+rust_engine/src/skinning/aarch64.rs          NEON（仅 aarch64 编译）
+common/.../render/capability/                OpenGL 能力快照与选择策略
+common/.../render/backend/gpu/               稀疏 Morph 缓冲、dispatch 与实例回退
+common/.../render/shader/                     新 compute shader 和编译自检
+```
+
+JNI 新接口使用批量 DirectBuffer，不增加逐顶点调用。静态 GPU 数据只复制一次，动态权重和矩阵继续复用
+已分配缓冲。已有 `RenderModeManager` 保留为工厂回退入口，但 `isAvailable()` 必须依赖真实 capability，
+不能再只排除 Android 后就返回 true。
+
+## 分阶段实施
+
+阶段 A：建立基准与语义测试。固定若干无 Morph、正/负 Morph、Group/Flip、UV Morph、超 128 Morph、
+不同骨权重和第一人称模型，记录 CPU 标量结果、帧时间、上传字节和显存。
+
+阶段 B：先修 CPU 热路径。消除骨骼数组 clone、Morph 临时 Vec 和渲染临时对象；建立标量与
+SSE2/AVX2/NEON 分派及一致性测试。该阶段本身即可改善所有平台和 GPU 回退。
+
+阶段 C：重构 GPU Morph。引入稀疏布局、负权重和无硬上限 shader，拆开 CPU Morph 物化；GPU 普通世界
+路径不再执行完整 CPU 顶点遍历。
+
+阶段 D：能力探测与自动回退。接入 `AUTO` 模式、逐模型资源上限检查、失败原因和旧配置迁移；在
+Windows/Linux/macOS 与 x86-64/ARM64 构建矩阵验证。
+
+阶段 E：优化第一人称。先完成 CPU 局部边界裁剪和索引分段；有数据证明它仍是瓶颈后，再做 GPU
+classification/indirect draw。GPU 物理继续作为独立 RFC，不并入本轮。
+
+## 验收门槛
+
+1. CPU 标量、各 SIMD 后端和 GPU 的位置/法线/UV结果在约定容差内一致；材质、骨骼、Group/Flip、
+   正负权重和超过旧 shader 上限的模型均有覆盖。
+2. GPU 普通世界路径的 CPU 顶点遍历为零，且同一 animation revision 多 pass 只 dispatch 一次。
+3. GPU 初始化失败、SSBO 超限、shader 编译失败和显式关闭 GPU 均能自动显示 CPU 结果，不丢模型。
+4. Windows x86-64 验证 AVX2 与 SSE2 强制回退；Windows ARM64/Linux ARM64 验证 NEON；macOS OpenGL
+   4.1 验证 CPU 回退。LoongArch64/RISC-V 至少完成交叉编译和标量路径测试。
+5. 基准至少覆盖 1/10/30 个模型、10k/50k/100k 顶点和不同 Morph 密度；分别报告 CPU update、JNI
+   上传、GPU dispatch、GPU draw、RAM/VRAM 和 P95/P99 帧时间，不只比较平均 FPS。
+6. `cargo test --lib`、Common 测试、Fabric/Forge 构建通过，并完成实际 Minecraft + Iris/常见驱动
+   回归；图形驱动测试与单元测试分开记录。
+
+审批后建议先实施阶段 A 与 B，再进入稀疏 GPU Morph。这样先得到跨平台、可对照的 CPU 基线，后续每次
+GPU 改动都能检测数值或视觉回归，而不是直接替换整条渲染链。
+
+## 调试 HUD 与渲染遥测补充
+
+现有 `PerformanceHud` 已能展示模型、纹理、RAM 和 VRAM，`RenderPerformanceProfiler` 也已记录
+`nativeModelUpdate`、骨骼/Morph 上传、Compute 提交和 Draw 的 CPU 墙钟时间。实施时复用这些入口，
+补充无阻塞 GPU 计时、滑动窗口统计和后端诊断，不在 HUD 刷新时临时遍历或同步等待 GPU。
+
+HUD 分为紧凑摘要和可展开明细，默认展示最近 120 帧的统计：
+
+```text
+Frame
+  Frame time        current / avg / P95 / P99
+  MMD CPU time      update / JNI+upload / submit / total
+  MMD GPU time      morph+skinning / draw / total
+  Visible models    count / vertices / draw calls / compute dispatches
+
+Backend
+  Active            GPU_COMPUTE / CPU_AVX2 / CPU_SSE2 / CPU_NEON / CPU_SCALAR
+  CPU work          animation / bones+IK / physics / material morph / CPU skinning
+  GPU work          vertex morph / UV morph / skinning+normal / raster draw
+  Transfer          bytes uploaded per frame / avoided uploads / readback bytes
+```
+
+“每帧渲染用时”需区分整帧与 MMD 自身开销。整帧时间在客户端帧边界用单调时钟采样；MMD CPU 时间只覆盖
+本模组动画更新、JNI、上传和 GL 命令提交，不能标成整个 Minecraft 的 CPU 渲染时间。GPU 时间使用
+OpenGL timer query，分别包围 Morph+Skinning Compute 和实际 Draw；查询结果延迟若干帧异步读取，维护
+查询对象环形池。结果尚未就绪时沿用上一份样本，禁止调用会阻塞渲染线程的等待或 `glFinish()`。
+
+骨骼、UV 等“占用 CPU/GPU 比重”不显示成一个看似能严格相加到 100% 的百分比，因为 CPU 与 GPU 可并行，
+CPU 提交时间也不代表 GPU 执行时间。HUD 同时提供两种口径：
+
+1. `CPU stage share`：各 CPU 阶段耗时占 MMD CPU 总耗时的比例，来源于真实墙钟采样。
+2. `GPU stage share`：Compute 与 Draw 占 MMD GPU 总耗时的比例，来源于 timer query。
+3. `Work placement`：骨骼、UV、Morph、蒙皮当前在哪个后端执行，以标签或分段条显示；这是职责分布，
+   不伪装成硬件利用率。
+
+骨骼项进一步拆成 CPU 动画采样、层级/IK/物理和 GPU 骨骼矩阵消费；UV 项拆成 CPU 权重准备/上传和 GPU
+稀疏 UV Morph。只有支持 timer query 的平台显示 GPU 分段耗时，不支持或 query 失败时显示 `N/A`，不以
+CPU dispatch 时间冒充 GPU 时间。GPU 全局利用率、显存带宽和功耗依赖厂商接口，不作为跨平台核心指标。
+
+统计实现使用固定大小无分配环形缓冲，保存 current、EMA、P95 和 P99；P95/P99 低频计算并随 HUD 的
+500ms 刷新节奏更新，渲染热路径只累计原始纳秒和计数。Profiler 关闭且 HUD 隐藏时保持近零开销；HUD
+打开时启用轻量采样，详细 GPU 分段计时可单独配置采样频率，避免每个模型、每个 pass 都创建查询对象。
+
+新增验收要求：HUD 开关前后进行基准对照；关闭时性能变化在噪声范围内，打开摘要时 CPU 开销目标低于
+0.1ms/帧，且不得产生 GPU 同步停顿。CPU/GPU 强制回退测试必须同步更新后端标签和阶段列表；多 pass、
+多模型场景中的计数和 revision 去重一致。最终以 RenderDoc/厂商 profiler 抽样核对 timer query 区间，
+确保 HUD 数值没有重复计时或漏计。

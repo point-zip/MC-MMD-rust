@@ -143,11 +143,6 @@ public class NativeFunc {
     /** 读取并清除左右手最终挂点诊断；output 必须恰有 24 项。 */
     public native boolean GetLastTaczArmDiagnostics(long model, float[] output);
 
-    /** 提交第三人称左右上臂的相对旋转，数组布局为 left/right xyzw。 */
-    public native boolean SetTaczThirdPersonArmRotations(long model, float[] rotations, int validMask);
-
-    public native void ClearTaczThirdPersonArmRotations(long model);
-
     public native long LoadTexture(String filename);
 
     public native void DeleteTexture(long tex);

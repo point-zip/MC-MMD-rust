@@ -17,9 +17,4 @@ public interface NativeTaczArmTargetPort {
     /** 读取并清除求解后的目标、手首、挂点、误差和臂长诊断。 */
     boolean getLastTaczArmDiagnostics(long modelHandle, float[] output);
 
-    /** 提交第三人称左右上臂相对腰射基线的局部旋转增量。 */
-    boolean setTaczThirdPersonArmRotations(long modelHandle, float[] rotations, int validMask);
-
-    /** 清除尚未消费的第三人称旋转，防止 LOD 跳帧复用旧姿态。 */
-    void clearTaczThirdPersonArmRotations(long modelHandle);
 }

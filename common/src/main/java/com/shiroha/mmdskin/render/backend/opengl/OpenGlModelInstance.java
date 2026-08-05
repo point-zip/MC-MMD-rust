@@ -96,6 +96,8 @@ public class OpenGlModelInstance extends BaseModelInstance {
     int lastBlockBrightness = Integer.MIN_VALUE;
     int lastSkyBrightness = Integer.MIN_VALUE;
     long lastPositionRevision = -1L;
+    long lastMaterialMorphRevision = -1L;
+    long lastMaterialMorphTransferBytes;
 
     OpenGlModelInstance() {
     }
@@ -256,5 +258,10 @@ public class OpenGlModelInstance extends BaseModelInstance {
     void applyMaterialMorphState(int resultCount, ByteBuffer resultBuffer) {
         this.materialMorphResultCount = resultCount;
         this.materialMorphResultsByteBuffer = resultBuffer;
+    }
+
+    @Override
+    public String getRenderBackendName() {
+        return "CPU_SKINNING";
     }
 }

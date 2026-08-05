@@ -178,37 +178,6 @@ public final class NativeRuntimeBridge implements
     }
 
     @Override
-    public boolean setTaczThirdPersonArmRotations(long modelHandle, float[] rotations, int validMask) {
-        if (!isValidTaczThirdPersonRotationPacket(rotations, validMask)) {
-            clearTaczThirdPersonArmRotations(modelHandle);
-            return false;
-        }
-        return nativeFunc().SetTaczThirdPersonArmRotations(modelHandle, rotations, validMask);
-    }
-
-    static boolean isValidTaczThirdPersonRotationPacket(float[] rotations, int validMask) {
-        if (rotations == null || rotations.length != 8 || validMask == 0 || (validMask & ~0b11) != 0) {
-            return false;
-        }
-        return ((validMask & 0b01) == 0 || isValidQuaternion(rotations, 0))
-                && ((validMask & 0b10) == 0 || isValidQuaternion(rotations, 4));
-    }
-
-    private static boolean isValidQuaternion(float[] values, int offset) {
-        float lengthSquared = 0.0f;
-        for (int index = offset; index < offset + 4; index++) {
-            if (!Float.isFinite(values[index])) return false;
-            lengthSquared += values[index] * values[index];
-        }
-        return Float.isFinite(lengthSquared) && lengthSquared > 1.0e-8f;
-    }
-
-    @Override
-    public void clearTaczThirdPersonArmRotations(long modelHandle) {
-        nativeFunc().ClearTaczThirdPersonArmRotations(modelHandle);
-    }
-
-    @Override
     public boolean copyMatrixToBuffer(long matrixHandle, ByteBuffer targetBuffer) {
         return nativeFunc().CopyMatToBuffer(matrixHandle, targetBuffer);
     }

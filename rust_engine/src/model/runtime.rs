@@ -131,6 +131,10 @@ pub struct MmdModel {
     // 物理系统
     physics: Option<MMDPhysics>,
     physics_enabled: bool,
+    /// LOD 暂停恢复后需先按当前骨骼姿态重同步，避免约束追赶旧刚体。
+    physics_resync_pending: bool,
+    /// 全局物理构建配置变化后在下一次模型更新时安全重建。
+    physics_rebuild_pending: bool,
     /// 骨骼变换缓冲区（避免每帧堆分配）
     physics_bone_transforms_buf: Vec<Mat4>,
 
@@ -284,6 +288,8 @@ impl MmdModel {
             model_transform: Mat4::IDENTITY,
             physics: None,
             physics_enabled: false,
+            physics_resync_pending: false,
+            physics_rebuild_pending: false,
             physics_bone_transforms_buf: Vec::new(),
             material_visible: Vec::new(),
             user_material_visible: Vec::new(),
@@ -2565,7 +2571,7 @@ impl MmdModel {
             }
         };
 
-        // 收集骨骼变换（复用缓冲区）
+        // 当前姿态只用于把新 Bullet 世界同步到动画帧，不能参与永久 offset 的构建。
         let bone_count = self.bone_manager.bone_count();
         self.physics_bone_transforms_buf
             .resize(bone_count, Mat4::IDENTITY);
@@ -2573,28 +2579,57 @@ impl MmdModel {
             self.physics_bone_transforms_buf[i] = self.bone_manager.get_global_transform(i);
         }
 
-        physics.build_physics(
-            &self.rigid_bodies,
-            &self.joints,
-            &self.physics_bone_transforms_buf,
-        );
+        // 参考 CySpring 的初始化时序：静态参数始终来自绑定姿态，运行姿态单独提交。
+        // PMX 绑定骨骼没有初始旋转，initial_position 已是右手模型空间的全局位置。
+        let bind_bone_transforms: Vec<Mat4> = self
+            .bone_manager
+            .links()
+            .map(|bone| Mat4::from_translation(bone.initial_position))
+            .collect();
+
+        physics.build_physics(&self.rigid_bodies, &self.joints, &bind_bone_transforms);
+        if crate::physics::config::get_config().debug_log {
+            log::info!(
+                "[Bullet3][诊断][参数基准] offset_source=pmx_bind_pose runtime_pose_separate=true bones={} rigid_bodies={} joints={}",
+                bone_count,
+                self.rigid_bodies.len(),
+                self.joints.len(),
+            );
+        }
         physics.initialize(&self.physics_bone_transforms_buf);
 
         self.physics = Some(physics);
         self.physics_enabled = true;
+        self.physics_resync_pending = false;
+        self.physics_rebuild_pending = false;
         true
     }
 
     /// 重置物理系统
     pub fn reset_physics(&mut self) {
-        if let Some(ref mut physics) = self.physics {
-            physics.reset();
+        if self.physics.is_some() {
+            // 动画切换接口通常在新动画求值前调用；延迟到下一次物理更新，
+            // 避免把上一帧物理回写姿态当成新链条的初始化姿态。
+            self.physics_resync_pending = true;
+            if crate::physics::config::get_config().debug_log {
+                log::info!("[Bullet3][PHYSICS_RESYNC_REQUEST] deferred_until_post_animation=true");
+            }
         }
     }
 
     /// 启用/禁用物理
     pub fn set_physics_enabled(&mut self, enabled: bool) {
+        if enabled && !self.physics_enabled {
+            self.physics_resync_pending = true;
+        }
         self.physics_enabled = enabled;
+    }
+
+    /// 请求在下一次更新时按最新全局配置重建物理世界。
+    pub fn request_physics_rebuild(&mut self) {
+        if self.physics.is_some() {
+            self.physics_rebuild_pending = true;
+        }
     }
 
     /// 获取物理是否启用
@@ -2620,18 +2655,62 @@ impl MmdModel {
             return;
         }
 
-        // 收集骨骼变换（复用缓冲区，resize + 索引赋值避免 push 分支开销）
-        let bone_count = self.bone_manager.bone_count();
-        self.physics_bone_transforms_buf
-            .resize(bone_count, Mat4::IDENTITY);
-        for i in 0..bone_count {
-            self.physics_bone_transforms_buf[i] = self.bone_manager.get_global_transform(i);
+        if self.physics_rebuild_pending {
+            self.physics = None;
+            if !self.init_physics() {
+                return;
+            }
         }
+
+        self.collect_physics_bone_transforms();
 
         let model_transform = self.model_transform;
 
         // 拆分借用：先取出 physics 避免同时借用 self
         let mut physics = self.physics.take().unwrap();
+
+        let max_step_delta = physics.max_step_delta_time();
+        if !delta_time.is_finite() {
+            // 时间参数异常时不重摆动态链，避免破坏已建立的关节锚点。
+            physics.recover_after_large_delta(&self.physics_bone_transforms_buf);
+            self.physics_resync_pending = false;
+            self.physics = Some(physics);
+            return;
+        }
+
+        if delta_time <= 0.0 {
+            // 第一人称会执行零步长求值；只同步运动学刚体，不清空动态物理链。
+            physics.sync_bodies(&self.physics_bone_transforms_buf);
+            self.physics = Some(physics);
+            return;
+        }
+
+        if self.physics_resync_pending {
+            // 动画切换是显式重置：按新动画姿态重新建立动态链的初始状态。
+            if crate::physics::config::get_config().debug_log {
+                log::info!(
+                    "[Bullet3][PHYSICS_RESYNC_APPLY] reason=requested post_animation_pose=true delta_time={:.6}",
+                    delta_time,
+                );
+            }
+            physics.initialize(&self.physics_bone_transforms_buf);
+            self.physics_resync_pending = false;
+            self.physics = Some(physics);
+            return;
+        }
+
+        if delta_time > max_step_delta {
+            // 卡顿帧只清除旧速度；重新按骨骼摆放动态体会制造关节锚点失配。
+            if crate::physics::config::get_config().debug_log {
+                log::info!(
+                    "[Bullet3][PHYSICS_GAP_RECOVER] reason=large_delta preserve_dynamic_constraints=true delta_time={:.6}",
+                    delta_time,
+                );
+            }
+            physics.recover_after_large_delta(&self.physics_bone_transforms_buf);
+            self.physics = Some(physics);
+            return;
+        }
 
         // 1. 同步运动学刚体
         physics.sync_bodies_with_model_velocity(
@@ -2660,6 +2739,16 @@ impl MmdModel {
 
         // 归还所有权
         self.physics = Some(physics);
+    }
+
+    /// 收集当前骨骼全局矩阵，供初始化、重置和每帧物理同步复用。
+    fn collect_physics_bone_transforms(&mut self) {
+        let bone_count = self.bone_manager.bone_count();
+        self.physics_bone_transforms_buf
+            .resize(bone_count, Mat4::IDENTITY);
+        for i in 0..bone_count {
+            self.physics_bone_transforms_buf[i] = self.bone_manager.get_global_transform(i);
+        }
     }
 
     /// 结束物理更新，清除物理骨骼保护
@@ -2723,6 +2812,13 @@ impl MmdModel {
         } else {
             String::from("{\"error\": \"no physics\"}")
         }
+    }
+
+    /// 一次性获取已聚合完成的物理诊断，避免 Java 重复输出同一窗口。
+    pub fn take_physics_debug_diagnostic(&mut self) -> Option<String> {
+        self.physics
+            .as_mut()
+            .and_then(MMDPhysics::take_debug_diagnostic)
     }
 
     // ======== VR 联动 ========

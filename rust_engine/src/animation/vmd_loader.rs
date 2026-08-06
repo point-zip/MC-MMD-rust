@@ -7,10 +7,10 @@ use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 use glam::{Quat, Vec3};
 
-use crate::morph::MorphManager;
 use crate::model::hand_attachment::{
     find_vmd_attachment_target, is_preferred_vmd_attachment_track,
 };
+use crate::morph::MorphManager;
 use crate::skeleton::BoneManager;
 use crate::{MmdError, Result};
 

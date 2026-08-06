@@ -23,6 +23,16 @@ public interface NativeRenderBackendPort extends NativeModelPort, NativeModelLoa
 
     void updateAnimationOnly(long modelHandle, float deltaTime);
 
+    default String takePhysicsDebugDiagnostic(long modelHandle) {
+        // 测试替身和不支持诊断的后端默认没有待输出消息。
+        return null;
+    }
+
+    default String takeRustLogs() {
+        // Rust 日志是进程级队列，轻量测试后端无需实现。
+        return null;
+    }
+
     int getIndexElementSize(long modelHandle);
 
     long getIndexDataAddress(long modelHandle);

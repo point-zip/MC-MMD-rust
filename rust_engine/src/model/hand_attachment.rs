@@ -30,10 +30,7 @@ fn is_dummy_attachment_name(name: &str, side: char) -> bool {
 }
 
 /// 将 TaCZ 主手 VMD 的通用右挂点轨道映射到模型实际使用的 Dummy 名称。
-pub(crate) fn find_vmd_attachment_target(
-    bones: &BoneManager,
-    track_name: &str,
-) -> Option<usize> {
+pub(crate) fn find_vmd_attachment_target(bones: &BoneManager, track_name: &str) -> Option<usize> {
     is_right_attachment_track(track_name)
         .then(|| find_hand_attachment(bones, "Hand_Attach_R", 'R'))
         .flatten()
@@ -112,6 +109,9 @@ mod tests {
         let names = ["ダミー.R".to_string(), "Hand_Attach_R".to_string()];
 
         assert!(!is_preferred_vmd_attachment_track("ダミー.R", names.iter()));
-        assert!(is_preferred_vmd_attachment_track("Hand_Attach_R", names.iter()));
+        assert!(is_preferred_vmd_attachment_track(
+            "Hand_Attach_R",
+            names.iter()
+        ));
     }
 }

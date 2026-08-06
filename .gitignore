@@ -125,3 +125,6 @@ rust_engine/deps/bullet3/
 /.tmp-tacz/
 /.codex-tmp/
 /multi_platform_optimization_plan.md
+/Cyspring/
+/.gradle-user-home/
+/.gradle-tmp-stage-a/

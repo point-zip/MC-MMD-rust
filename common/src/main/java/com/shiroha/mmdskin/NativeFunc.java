@@ -24,6 +24,8 @@ public class NativeFunc {
 
     public native String GetVersion();
 
+    public native String TakeRustLogs();
+
     public native byte ReadByte(long data, long pos);
 
     public native void CopyDataToByteBuffer(ByteBuffer buffer, long data, long pos);
@@ -213,6 +215,8 @@ public class NativeFunc {
 
     public native String GetPhysicsDebugInfo(long model);
 
+    public native String TakePhysicsDebugDiagnostic(long model);
+
     public native boolean IsMaterialVisible(long model, int index);
 
     public native void SetMaterialVisible(long model, int index, boolean visible);
@@ -327,6 +331,8 @@ public class NativeFunc {
         float maxAngularVelocity,
         boolean jointsEnabled,
         boolean kinematicFilter,
+        boolean collisionEnabled,
+        int collisionStabilityMode,
         boolean debugLog
     );
 

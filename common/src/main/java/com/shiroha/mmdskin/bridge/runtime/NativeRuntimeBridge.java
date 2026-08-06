@@ -42,6 +42,8 @@ public final class NativeRuntimeBridge implements
                     physicsConfig.maxAngularVelocity(),
                     physicsConfig.jointsEnabled(),
                     physicsConfig.kinematicFilter(),
+                    physicsConfig.collisionEnabled(),
+                    physicsConfig.collisionStabilityMode().nativeValue(),
                     physicsConfig.debugLog());
         } catch (UnsatisfiedLinkError e) {
             logger.warn("物理配置 JNI 方法未找到，请重新编译 Rust 库");
@@ -111,6 +113,16 @@ public final class NativeRuntimeBridge implements
     @Override
     public void updateAnimationOnly(long modelHandle, float deltaTime) {
         nativeFunc().UpdateAnimationOnly(modelHandle, deltaTime);
+    }
+
+    @Override
+    public String takePhysicsDebugDiagnostic(long modelHandle) {
+        return nativeFunc().TakePhysicsDebugDiagnostic(modelHandle);
+    }
+
+    @Override
+    public String takeRustLogs() {
+        return nativeFunc().TakeRustLogs();
     }
 
     @Override

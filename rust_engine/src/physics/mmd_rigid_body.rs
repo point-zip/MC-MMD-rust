@@ -5,9 +5,154 @@
 
 use glam::{Mat4, Quat, Vec3};
 
+use mmd::pmx::joint::Joint as PmxJoint;
 use mmd::pmx::rigid_body::{RigidBody as PmxRigidBody, RigidBodyMode, RigidBodyShape};
 
 use super::bullet_ffi::{BulletRigidBody, BulletShape, RigidBodyInfo};
+
+/// 跟随骨骼的人体碰撞壳厚度倍率。缩放不移动中心、中心轴或关节锚点。
+pub const STATIC_COLLISION_SHAPE_SCALE: f32 = 0.7;
+
+/// 返回实际传给 Bullet 和调试渲染器的碰撞形状尺寸。
+pub fn effective_collision_shape_size(pmx_rb: &PmxRigidBody) -> [f32; 3] {
+    effective_collision_shape_size_with_static_scale(pmx_rb, STATIC_COLLISION_SHAPE_SCALE, true)
+}
+
+/// 使用指定倍率计算碰撞形状尺寸，仅收窄跟随骨骼的人体碰撞壳。
+pub fn effective_collision_shape_size_with_static_scale(
+    pmx_rb: &PmxRigidBody,
+    static_scale: f32,
+    shrink_body_collider: bool,
+) -> [f32; 3] {
+    if pmx_rb.mode != RigidBodyMode::Static || !shrink_body_collider {
+        return pmx_rb.size;
+    }
+
+    let scale = static_scale.clamp(0.1, 1.0);
+    match pmx_rb.shape {
+        // CySpring 将人体碰撞体半径与中心轴分开传入；这里同样只缩碰撞壳厚度。
+        RigidBodyShape::Sphere => [pmx_rb.size[0] * scale, pmx_rb.size[1], pmx_rb.size[2]],
+        RigidBodyShape::Capsule => [pmx_rb.size[0] * scale, pmx_rb.size[1], pmx_rb.size[2]],
+        // PMX 箱体的局部 Y 是人体碰撞体高度，保留高度只收窄横截面。
+        RigidBodyShape::Box => [
+            pmx_rb.size[0] * scale,
+            pmx_rb.size[1],
+            pmx_rb.size[2] * scale,
+        ],
+    }
+}
+
+/// 按 PMX 的部位、碰撞组和关节用途识别需要收窄的人体碰撞体。
+pub fn body_collider_scale_flags(rigid_bodies: &[PmxRigidBody], joints: &[PmxJoint]) -> Vec<bool> {
+    rigid_bodies
+        .iter()
+        .enumerate()
+        .map(|(index, body)| {
+            body.mode == RigidBodyMode::Static
+                && is_lower_body_collider(body)
+                && collides_with_skirt_dynamic_body(body, rigid_bodies)
+                && !is_dynamic_chain_anchor(index, rigid_bodies, joints)
+        })
+        .collect()
+}
+
+fn is_lower_body_collider(body: &PmxRigidBody) -> bool {
+    const PART_NAMES: &[&str] = &[
+        "下半身",
+        "腰",
+        "足",
+        "ひざ",
+        "膝",
+        "腿",
+        "thigh",
+        "shin",
+        "leg",
+        "hip",
+        "pelvis",
+        "waist",
+        "body_blocker",
+        "skirt_collider",
+    ];
+    let local = body.local_name.to_lowercase();
+    let universal = body.universal_name.to_lowercase();
+    PART_NAMES
+        .iter()
+        .any(|part| local.contains(part) || universal.contains(part))
+}
+
+fn collides_with_skirt_dynamic_body(body: &PmxRigidBody, rigid_bodies: &[PmxRigidBody]) -> bool {
+    rigid_bodies.iter().any(|dynamic| {
+        dynamic.mode != RigidBodyMode::Static
+            && is_skirt_or_lower_garment(dynamic)
+            && collision_pair_is_enabled(body, dynamic)
+    })
+}
+
+pub(super) fn is_skirt_or_lower_garment(body: &PmxRigidBody) -> bool {
+    const PART_NAMES: &[&str] = &[
+        "裙",
+        "スカート",
+        "skirt",
+        "petticoat",
+        "下装",
+        "下衣",
+        "裾",
+        "摆",
+        "衣摆",
+        "后摆",
+        "下摆",
+        "风衣",
+        "外套",
+        "コート",
+        "coat",
+        "cloak",
+        "cape",
+        "flap",
+    ];
+    let local = body.local_name.to_lowercase();
+    let universal = body.universal_name.to_lowercase();
+    PART_NAMES
+        .iter()
+        .any(|part| local.contains(part) || universal.contains(part))
+}
+
+/// 尾巴是独立动态链，不能并入裙摆分类，否则跨部位碰撞无法单独诊断和过滤。
+pub(super) fn is_tail_dynamic_part(body: &PmxRigidBody) -> bool {
+    let local = body.local_name.to_ascii_lowercase();
+    let universal = body.universal_name.to_ascii_lowercase();
+    local.contains("tail") || universal.contains("tail")
+}
+
+fn collision_pair_is_enabled(a: &PmxRigidBody, b: &PmxRigidBody) -> bool {
+    let a_mask = pmx_collision_mask(a.un_collision_group_flag);
+    let b_mask = pmx_collision_mask(b.un_collision_group_flag);
+    (a_mask & (1u16 << b.group.min(15))) != 0 && (b_mask & (1u16 << a.group.min(15))) != 0
+}
+
+fn is_dynamic_chain_anchor(
+    body_index: usize,
+    rigid_bodies: &[PmxRigidBody],
+    joints: &[PmxJoint],
+) -> bool {
+    joints.iter().any(|joint| {
+        let Ok(a) = usize::try_from(joint.rigid_body_a_index) else {
+            return false;
+        };
+        let Ok(b) = usize::try_from(joint.rigid_body_b_index) else {
+            return false;
+        };
+        let other = if a == body_index {
+            b
+        } else if b == body_index {
+            a
+        } else {
+            return false;
+        };
+        rigid_bodies
+            .get(other)
+            .is_some_and(|body| body.mode != RigidBodyMode::Static)
+    })
+}
 
 /// 物理模式（对应 babylon-mmd 的 PhysicsMode）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,11 +221,16 @@ impl MmdRigidBodyData {
     /// 从 PMX 刚体数据创建
     ///
     /// 骨骼(右手)通过 inv_z 转为左手后计算 offset = B0_left⁻¹ * R0_left。
-    pub fn from_pmx(pmx_rb: &PmxRigidBody, bind_bone_transform: Option<Mat4>) -> Self {
+    pub fn from_pmx(
+        pmx_rb: &PmxRigidBody,
+        bind_bone_transform: Option<Mat4>,
+        shape_size: [f32; 3],
+    ) -> Self {
         let physics_mode = PhysicsMode::from(pmx_rb.mode);
 
         let decoded_rotation = normalize_rigid_body_rotation(pmx_rb.rotation);
-        // Babylon 的 FromEulerAngles 使用 Y-X-Z 组合；刚体 shape 朝向不能套用关节 frame 的构造顺序。
+        // PMX 刚体与关节都按 Bullet setEulerZYX 的 X-Y-Z 输入语义构造，
+        // 避免多轴旋转时碰撞形状与约束轴落入不同的局部坐标系。
         let rotation = rigid_body_rotation(decoded_rotation);
 
         let position = Vec3::new(pmx_rb.position[0], pmx_rb.position[1], pmx_rb.position[2]);
@@ -114,7 +264,7 @@ impl MmdRigidBodyData {
             decoded_rotation,
             shape_size: pmx_rb.size,
             shape_name: rigid_body_shape_name(pmx_rb.shape),
-            collision_half_extents: collision_half_extents(pmx_rb),
+            collision_half_extents: collision_half_extents(pmx_rb.shape, shape_size),
             bullet_body: None,
             bullet_shape: None,
             mass: pmx_rb.mass,
@@ -122,13 +272,11 @@ impl MmdRigidBodyData {
     }
 
     /// 创建 Bullet3 碰撞形状（C++ OOM 时返回 None）
-    pub fn create_shape(pmx_rb: &PmxRigidBody) -> Option<BulletShape> {
+    pub fn create_shape(pmx_rb: &PmxRigidBody, size: [f32; 3]) -> Option<BulletShape> {
         match pmx_rb.shape {
-            RigidBodyShape::Sphere => BulletShape::sphere(pmx_rb.size[0]),
-            RigidBodyShape::Box => {
-                BulletShape::r#box(pmx_rb.size[0], pmx_rb.size[1], pmx_rb.size[2])
-            }
-            RigidBodyShape::Capsule => BulletShape::capsule(pmx_rb.size[0], pmx_rb.size[1]),
+            RigidBodyShape::Sphere => BulletShape::sphere(size[0]),
+            RigidBodyShape::Box => BulletShape::r#box(size[0], size[1], size[2]),
+            RigidBodyShape::Capsule => BulletShape::capsule(size[0], size[1]),
         }
     }
 
@@ -186,16 +334,12 @@ impl MmdRigidBodyData {
 }
 
 /// 将 PMX 形状转换为局部保守 AABB 半尺寸，不参与 Bullet 求解。
-fn collision_half_extents(pmx_rb: &PmxRigidBody) -> Option<Vec3> {
-    let extents = match pmx_rb.shape {
-        RigidBodyShape::Sphere => Vec3::splat(pmx_rb.size[0]),
-        RigidBodyShape::Box => Vec3::from_array(pmx_rb.size),
+fn collision_half_extents(shape: RigidBodyShape, size: [f32; 3]) -> Option<Vec3> {
+    let extents = match shape {
+        RigidBodyShape::Sphere => Vec3::splat(size[0]),
+        RigidBodyShape::Box => Vec3::from_array(size),
         // Bullet 胶囊沿 Y 轴，size[1] 是圆柱段高度。
-        RigidBodyShape::Capsule => Vec3::new(
-            pmx_rb.size[0],
-            pmx_rb.size[0] + pmx_rb.size[1] * 0.5,
-            pmx_rb.size[0],
-        ),
+        RigidBodyShape::Capsule => Vec3::new(size[0], size[0] + size[1] * 0.5, size[0]),
     };
     (extents.is_finite() && extents.cmpgt(Vec3::ZERO).all()).then_some(extents)
 }
@@ -205,9 +349,15 @@ fn pmx_collision_mask(un_collision_group_flag: u16) -> u16 {
     !un_collision_group_flag
 }
 
-/// 按 Babylon `Quaternion.FromEulerAngles` 的 Y-X-Z 语义构造刚体朝向。
+/// 按 Bullet `setEulerZYX(x, y, z)` 的语义构造 PMX 物理旋转。
+pub(super) fn mmd_physics_rotation(rotation: [f32; 3]) -> Quat {
+    Quat::from_rotation_z(rotation[2])
+        * Quat::from_rotation_y(rotation[1])
+        * Quat::from_rotation_x(rotation[0])
+}
+
 fn rigid_body_rotation(rotation: [f32; 3]) -> Quat {
-    Quat::from_euler(glam::EulerRot::YXZ, rotation[1], rotation[0], rotation[2])
+    mmd_physics_rotation(rotation)
 }
 
 fn rigid_body_shape_name(shape: RigidBodyShape) -> &'static str {
@@ -237,10 +387,12 @@ fn normalize_rigid_body_rotation(rotation: [f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::{
-        collision_half_extents, normalize_rigid_body_rotation, pmx_collision_mask,
-        rigid_body_rotation,
+        body_collider_scale_flags, collision_half_extents, effective_collision_shape_size,
+        effective_collision_shape_size_with_static_scale, normalize_rigid_body_rotation,
+        pmx_collision_mask, rigid_body_rotation,
     };
     use glam::{Mat4, Quat, Vec3};
+    use mmd::pmx::joint::{Joint, JointType};
     use mmd::pmx::rigid_body::{RigidBody, RigidBodyMode, RigidBodyShape};
 
     #[test]
@@ -259,9 +411,10 @@ mod tests {
     }
 
     #[test]
-    fn rigid_body_rotation_matches_babylon_yxz_composition() {
+    fn rigid_body_rotation_matches_bullet_zyx_matrix_composition() {
         let [x, y, z] = [0.31, -0.47, 0.83];
-        let expected = Quat::from_euler(glam::EulerRot::YXZ, y, x, z);
+        let expected =
+            Quat::from_rotation_z(z) * Quat::from_rotation_y(y) * Quat::from_rotation_x(x);
         assert!(rigid_body_rotation([x, y, z]).abs_diff_eq(expected, 1e-6));
     }
 
@@ -270,7 +423,9 @@ mod tests {
         let radians = [0.355_930_42, -0.000_011_105_393, std::f32::consts::PI];
         let export_scale = (180.0_f32 / std::f32::consts::PI).powi(2);
         let encoded = radians.map(|value| value * export_scale);
-        let expected = Quat::from_euler(glam::EulerRot::YXZ, radians[1], radians[0], radians[2]);
+        let expected = Quat::from_rotation_z(radians[2])
+            * Quat::from_rotation_y(radians[1])
+            * Quat::from_rotation_x(radians[0]);
 
         assert!(
             rigid_body_rotation(normalize_rigid_body_rotation(encoded)).abs_diff_eq(expected, 1e-5)
@@ -318,8 +473,101 @@ mod tests {
     fn capsule_bounds_include_caps_and_cylinder_height() {
         let body = test_rigid_body(RigidBodyShape::Capsule, [0.5, 2.0, 0.0]);
         assert_eq!(
-            collision_half_extents(&body),
+            collision_half_extents(body.shape, body.size),
             Some(Vec3::new(0.5, 1.5, 0.5))
+        );
+    }
+
+    #[test]
+    fn dynamic_shape_keeps_original_size() {
+        let body = test_rigid_body(RigidBodyShape::Box, [2.0, 4.0, 6.0]);
+        assert_eq!(effective_collision_shape_size(&body), body.size);
+    }
+
+    #[test]
+    fn static_capsule_only_shrinks_collision_radius() {
+        let mut body = test_rigid_body(RigidBodyShape::Capsule, [1.0, 4.0, 0.0]);
+        body.mode = RigidBodyMode::Static;
+        assert_eq!(effective_collision_shape_size(&body), [0.7, 4.0, 0.0]);
+    }
+
+    #[test]
+    fn static_box_preserves_local_height() {
+        let mut body = test_rigid_body(RigidBodyShape::Box, [2.0, 4.0, 6.0]);
+        body.mode = RigidBodyMode::Static;
+        assert_eq!(
+            effective_collision_shape_size_with_static_scale(&body, 0.5, true),
+            [1.0, 4.0, 3.0]
+        );
+    }
+
+    #[test]
+    fn custom_static_scale_is_clamped_to_viewer_range() {
+        let mut body = test_rigid_body(RigidBodyShape::Sphere, [1.0, 0.0, 0.0]);
+        body.mode = RigidBodyMode::Static;
+        assert_eq!(
+            super::effective_collision_shape_size_with_static_scale(&body, 0.05, true),
+            [0.1, 0.0, 0.0]
+        );
+        assert_eq!(
+            super::effective_collision_shape_size_with_static_scale(&body, 2.0, true),
+            body.size
+        );
+    }
+
+    #[test]
+    fn body_collider_filter_uses_part_mask_and_anchor_topology() {
+        let mut collider = test_rigid_body(RigidBodyShape::Capsule, [1.0, 2.0, 0.0]);
+        collider.local_name = "M-M-M-下半身".to_owned();
+        collider.mode = RigidBodyMode::Static;
+        collider.group = 0;
+
+        let mut anchor = test_rigid_body(RigidBodyShape::Sphere, [0.2, 0.0, 0.0]);
+        anchor.local_name = "下半身".to_owned();
+        anchor.mode = RigidBodyMode::Static;
+        anchor.group = 0;
+
+        let mut skirt = test_rigid_body(RigidBodyShape::Box, [1.0, 1.0, 0.2]);
+        skirt.local_name = "裙_0_0".to_owned();
+        skirt.group = 7;
+
+        let bodies = vec![collider, anchor, skirt];
+        let joints = vec![Joint {
+            local_name: "裙根".to_owned(),
+            universal_name: String::new(),
+            type_: JointType::Spring6DOF,
+            rigid_body_a_index: 1,
+            rigid_body_b_index: 2,
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            position_min: [0.0; 3],
+            position_max: [0.0; 3],
+            rotation_min: [0.0; 3],
+            rotation_max: [0.0; 3],
+            position_spring: [0.0; 3],
+            rotation_spring: [0.0; 3],
+        }];
+
+        assert_eq!(
+            body_collider_scale_flags(&bodies, &joints),
+            [true, false, false]
+        );
+    }
+
+    #[test]
+    fn lower_body_collider_is_not_scaled_for_sleeve_only_collision() {
+        let mut collider = test_rigid_body(RigidBodyShape::Capsule, [1.0, 2.0, 0.0]);
+        collider.local_name = "M-M-M-下半身".to_owned();
+        collider.mode = RigidBodyMode::Static;
+        collider.group = 0;
+
+        let mut sleeve = test_rigid_body(RigidBodyShape::Box, [1.0, 1.0, 0.2]);
+        sleeve.local_name = "右袖2".to_owned();
+        sleeve.group = 7;
+
+        assert_eq!(
+            body_collider_scale_flags(&[collider, sleeve], &[]),
+            [false, false]
         );
     }
 
@@ -334,7 +582,7 @@ mod tests {
         let bind_pose = Mat4::from_translation(Vec3::new(1.0, 3.0, 0.5));
         let runtime_pose =
             Mat4::from_rotation_translation(Quat::from_rotation_y(0.8), Vec3::new(1.4, 3.2, -0.3));
-        let data = super::MmdRigidBodyData::from_pmx(&pmx_body, Some(bind_pose));
+        let data = super::MmdRigidBodyData::from_pmx(&pmx_body, Some(bind_pose), pmx_body.size);
         let expected_offset = super::super::inv_z(bind_pose).inverse() * data.initial_transform;
 
         assert!(data.body_offset_matrix.abs_diff_eq(expected_offset, 1e-6));

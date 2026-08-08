@@ -1,7 +1,10 @@
 //! 物理初始化数据诊断。
 
+use std::collections::HashMap;
+
 use glam::{Mat4, Quat, Vec3};
 
+use super::bullet_ffi::BulletWorld;
 use super::mmd_joint::{joint_anchor_position_error, MmdJointData};
 use super::mmd_rigid_body::MmdRigidBodyData;
 
@@ -106,6 +109,103 @@ pub(super) fn log_joint_anchor_baseline(
             "[Bullet3][INIT_ANCHOR_PRE_STEP_BODIES] bodies='{}'/'{}'",
             body_a,
             body_b,
+        );
+    }
+}
+
+/// 在首个求解步之前回读每个 6DOF 约束，定位输入 frame 与运行后受力之间的分界。
+pub(super) fn log_joint_constraints_pre_step(
+    rigid_bodies: &[MmdRigidBodyData],
+    joints: &[MmdJointData],
+) {
+    for joint in joints {
+        let Some(diagnostic) = joint
+            .constraint
+            .as_ref()
+            .and_then(|constraint| constraint.diagnostic())
+        else {
+            continue;
+        };
+        let body_a = usize::try_from(joint.rigid_body_a_index)
+            .ok()
+            .and_then(|index| rigid_bodies.get(index))
+            .map_or("?", |body| body.name.as_str());
+        let body_b = usize::try_from(joint.rigid_body_b_index)
+            .ok()
+            .and_then(|index| rigid_bodies.get(index))
+            .map_or("?", |body| body.name.as_str());
+
+        log::info!(
+            "[Bullet3][INIT_CONSTRAINT_PRE_STEP] joint='{}' bodies='{}'/'{}' linear_pos={} linear_lower={} linear_upper={} linear_violation={} angular_pos={} angular_lower={} angular_upper={} angular_violation={} spring={:?} equilibrium={:?} frame_offset={}",
+            joint.name,
+            body_a,
+            body_b,
+            format_vec3(diagnostic.linear_position),
+            format_vec3(diagnostic.linear_lower),
+            format_vec3(diagnostic.linear_upper),
+            format_vec3(diagnostic.linear_violation),
+            format_vec3(diagnostic.angular_position),
+            format_vec3(diagnostic.angular_lower),
+            format_vec3(diagnostic.angular_upper),
+            format_vec3(diagnostic.angular_violation),
+            diagnostic.spring_enabled,
+            diagnostic.equilibrium,
+            diagnostic.use_frame_offset,
+        );
+    }
+}
+
+/// 在任何求解发生前读取 Bullet 的真实穿透接触，以区分初始交叠和首步后的约束驱动。
+pub(super) fn log_initial_contacts_pre_step(
+    world: &BulletWorld,
+    rigid_bodies: &[MmdRigidBodyData],
+    body_pointer_indices: &HashMap<usize, usize>,
+) {
+    // 此调用只更新宽相和窄相；不会推进时间，也不会向刚体或关节施加冲量。
+    world.detect_collisions();
+
+    let mut contacts: Vec<_> = world
+        .contact_manifolds()
+        .into_iter()
+        .filter_map(|contact| {
+            let body_a_index = *body_pointer_indices.get(&contact.body_a)?;
+            let body_b_index = *body_pointer_indices.get(&contact.body_b)?;
+            Some((contact, body_a_index, body_b_index))
+        })
+        .collect();
+    contacts.sort_by(|(left, _, _), (right, _, _)| {
+        right
+            .max_penetration_depth
+            .total_cmp(&left.max_penetration_depth)
+    });
+    contacts.truncate(5);
+
+    if contacts.is_empty() {
+        log::info!("[Bullet3][INIT_CONTACT_PRE_STEP] none");
+        return;
+    }
+
+    for (rank, (contact, body_a_index, body_b_index)) in contacts.into_iter().enumerate() {
+        let body_a = &rigid_bodies[body_a_index];
+        let body_b = &rigid_bodies[body_b_index];
+        log::info!(
+            "[Bullet3][INIT_CONTACT_PRE_STEP#{}] A='{}' mode={:?} group={} mask=0x{:04X} B='{}' mode={:?} group={} mask=0x{:04X} points={} depth={:.5} impulse_peak={:.5} impulse_sum={:.5} point_a={} point_b={} normal_on_b={}",
+            rank + 1,
+            body_a.name,
+            body_a.physics_mode,
+            body_a.group,
+            body_a.collision_mask,
+            body_b.name,
+            body_b.physics_mode,
+            body_b.group,
+            body_b.collision_mask,
+            contact.contact_count,
+            contact.max_penetration_depth,
+            contact.max_applied_impulse,
+            contact.total_applied_impulse,
+            format_vec3(contact.point_a),
+            format_vec3(contact.point_b),
+            format_vec3(contact.normal_on_b),
         );
     }
 }

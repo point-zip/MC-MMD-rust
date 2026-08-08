@@ -151,6 +151,12 @@ void bw_world_step(BW_World* w, float dt, int max_substeps, float fixed_dt) {
     w->world->stepSimulation(dt, max_substeps, fixed_dt);
 }
 
+void bw_world_detect_collisions(BW_World* w) {
+    if (!w) return;
+    // 初始化阶段只需要建立真实接触流形，不能让求解器改写刚体状态。
+    w->world->performDiscreteCollisionDetection();
+}
+
 void bw_world_set_gravity(BW_World* w, float x, float y, float z) {
     if (!w) return;
     w->world->setGravity(btVector3(x, y, z));

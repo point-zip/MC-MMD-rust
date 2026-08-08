@@ -100,6 +100,7 @@ mod ffi {
             max_substeps: c_int,
             fixed_dt: c_float,
         );
+        pub fn bw_world_detect_collisions(world: *mut BW_World);
         pub fn bw_world_set_gravity(world: *mut BW_World, x: c_float, y: c_float, z: c_float);
         pub fn bw_world_add_rigid_body(
             world: *mut BW_World,
@@ -282,6 +283,11 @@ impl BulletWorld {
 
     pub fn step(&self, dt: f32, max_substeps: i32, fixed_dt: f32) {
         unsafe { ffi::bw_world_step(self.ptr, dt, max_substeps, fixed_dt) }
+    }
+
+    /// 仅刷新碰撞检测结果，供初始化阶段读取首个求解步之前的接触。
+    pub fn detect_collisions(&self) {
+        unsafe { ffi::bw_world_detect_collisions(self.ptr) }
     }
 
     /// 复制当前求解步中仍处于穿透状态的真实接触流形。

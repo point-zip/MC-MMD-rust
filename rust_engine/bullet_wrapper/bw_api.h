@@ -94,6 +94,8 @@ typedef struct {
 BW_World* bw_world_create(float gravity_x, float gravity_y, float gravity_z);
 void bw_world_destroy(BW_World* world);
 void bw_world_step(BW_World* world, float dt, int max_substeps, float fixed_dt);
+/* 仅更新宽相/窄相接触，不推进时间、不执行约束或接触求解。 */
+void bw_world_detect_collisions(BW_World* world);
 void bw_world_set_gravity(BW_World* world, float x, float y, float z);
 void bw_world_add_rigid_body(BW_World* world, BW_RigidBody* rb, int group, int mask);
 void bw_world_remove_rigid_body(BW_World* world, BW_RigidBody* rb);

@@ -45,6 +45,10 @@ pub struct CollisionBody {
     pub group: u8,
     pub collision_mask: u16,
     pub is_dynamic: bool,
+    /// 是否属于裙摆或下装动态系统，用于收窄 Stable 模式的全连通分量过滤。
+    pub is_skirt: bool,
+    /// 是否属于尾巴动态链，用于隔离初始已穿入后裙的跨碰撞组刚体对。
+    pub is_tail: bool,
     pub is_active: bool,
     /// 初始姿态下旋转碰撞体的保守世界 AABB；缺失时仅使用拓扑规则。
     pub initial_aabb: Option<CollisionAabb>,
@@ -90,6 +94,8 @@ impl CollisionAabb {
 pub struct CollisionFilterPlan {
     pub pairs: Vec<(usize, usize)>,
     pub preserved_dynamic_kinematic_pairs: usize,
+    /// Stable 模式中过滤的“尾部 FollowBone 锚点-动态裙摆”初始重叠对。
+    pub filtered_tail_anchor_skirt_pairs: usize,
     pub largest_dynamic_component: usize,
     pub initial_overlap_dynamic_dynamic_pairs: usize,
     pub initial_overlap_dynamic_kinematic_pairs: usize,
@@ -181,8 +187,15 @@ pub fn build_filter_plan(
             let distance = distances[other];
             let should_ignore = match mode {
                 CollisionStabilityMode::Strict => false,
-                // Stable 只处理局部关节邻域；保守 AABB 可能把正常贴近误判为穿插。
-                CollisionStabilityMode::Stable => distance <= 2,
+                // 裙摆网格常用错列横向关节，图距离大于 2 的刚体仍可能在绑定姿态互相穿插。
+                // 只过滤初态已经重叠的远距离裙片，保留其余自碰撞用于维持裙摆体积。
+                CollisionStabilityMode::Stable => {
+                    distance <= 2
+                        || (bodies[start].is_skirt
+                            && bodies[other].is_skirt
+                            && distance != usize::MAX
+                            && dynamic_pair_initially_overlaps(bodies[start], bodies[other]))
+                }
                 CollisionStabilityMode::Relaxed => distance != usize::MAX,
             };
             if should_ignore && collision_allowed(bodies[start], bodies[other]) {
@@ -193,6 +206,97 @@ pub fn build_filter_plan(
             }
         }
     }
+
+    // PMX 中常见多个动态刚体分别挂到同一个 FollowBone 根（例如四片袖子挂到肘部）。
+    // 这些兄弟刚体不会出现在上面的纯动态图中；仅当它们在绑定姿态已经重叠时禁碰，
+    // 避免碰撞分离与共同锚点约束持续对抗，同时保留正常分离衣片之间的碰撞。
+    let mut kinematic_children = vec![Vec::<usize>::new(); bodies.len()];
+    for &(a, b) in joints {
+        let (Ok(a), Ok(b)) = (usize::try_from(a), usize::try_from(b)) else {
+            continue;
+        };
+        if a >= bodies.len() || b >= bodies.len() || a == b {
+            continue;
+        }
+        let (root, child) = if !bodies[a].is_dynamic && bodies[b].is_dynamic {
+            (a, b)
+        } else if !bodies[b].is_dynamic && bodies[a].is_dynamic {
+            (b, a)
+        } else {
+            continue;
+        };
+        if bodies[root].is_active
+            && bodies[child].is_active
+            && !kinematic_children[root].contains(&child)
+        {
+            kinematic_children[root].push(child);
+        }
+    }
+
+    for children in kinematic_children {
+        for a_index in 0..children.len() {
+            for b_index in (a_index + 1)..children.len() {
+                let (a, b) = if children[a_index] < children[b_index] {
+                    (children[a_index], children[b_index])
+                } else {
+                    (children[b_index], children[a_index])
+                };
+                if mode != CollisionStabilityMode::Strict
+                    && bodies[a].group == bodies[b].group
+                    && collision_allowed(bodies[a], bodies[b])
+                    && dynamic_pair_initially_overlaps(bodies[a], bodies[b])
+                {
+                    plan.pairs.push((a, b));
+                }
+            }
+        }
+    }
+
+    // 尾巴与后裙通常属于不同碰撞组，也没有关节边，因此不会进入上面的连通图过滤。
+    // Stable 模式只断开绑定姿态下已经重叠的尾巴-裙摆对。这里也包含 FollowBone
+    // 尾根锚点：静止锚点若持续顶住动态后裙，会与裙环关节形成高频能量输入。
+    if mode == CollisionStabilityMode::Stable {
+        for a in 0..bodies.len() {
+            for b in (a + 1)..bodies.len() {
+                let tail_skirt_pair = (bodies[a].is_tail && bodies[b].is_skirt)
+                    || (bodies[b].is_tail && bodies[a].is_skirt);
+                let has_dynamic_skirt = (bodies[a].is_skirt && bodies[a].is_dynamic)
+                    || (bodies[b].is_skirt && bodies[b].is_dynamic);
+                if tail_skirt_pair
+                    && has_dynamic_skirt
+                    && bodies[a].is_active
+                    && bodies[b].is_active
+                    && collision_allowed(bodies[a], bodies[b])
+                    && aabb_overlap(bodies[a], bodies[b])
+                {
+                    plan.pairs.push((a, b));
+                }
+            }
+        }
+    }
+
+    // 一个刚体对可能同时由动态链和共享根规则命中。
+    plan.pairs.sort_unstable();
+    plan.pairs.dedup();
+    plan.filtered_tail_anchor_skirt_pairs = plan
+        .pairs
+        .iter()
+        .filter(|&&(a, b)| {
+            bodies[a].is_dynamic != bodies[b].is_dynamic
+                && ((bodies[a].is_tail && bodies[b].is_skirt)
+                    || (bodies[b].is_tail && bodies[a].is_skirt))
+        })
+        .count();
+    plan.preserved_dynamic_kinematic_pairs = plan
+        .preserved_dynamic_kinematic_pairs
+        .saturating_sub(plan.filtered_tail_anchor_skirt_pairs);
+    plan.filtered_initial_overlap_pairs = plan
+        .pairs
+        .iter()
+        .filter(|&&(a, b)| {
+            bodies[a].is_dynamic && bodies[b].is_dynamic && aabb_overlap(bodies[a], bodies[b])
+        })
+        .count();
 
     plan
 }
@@ -221,6 +325,8 @@ mod tests {
         group: 7,
         collision_mask: 0xFFFF,
         is_dynamic: true,
+        is_skirt: false,
+        is_tail: false,
         is_active: true,
         initial_aabb: None,
     };
@@ -380,6 +486,182 @@ mod tests {
     }
 
     #[test]
+    fn stable_filters_initially_overlapping_distant_skirt_pair() {
+        let skirt = CollisionBody {
+            is_skirt: true,
+            ..DYNAMIC_GROUP_7
+        };
+        let mut bodies = [skirt; 4];
+        let overlap = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
+        bodies[0].initial_aabb = overlap;
+        bodies[3].initial_aabb = overlap;
+
+        let plan = build_filter_plan(
+            &bodies,
+            &[(0, 1), (1, 2), (2, 3)],
+            CollisionStabilityMode::Stable,
+        );
+
+        assert!(plan.pairs.contains(&(0, 3)));
+        assert_eq!(plan.pairs.len(), 6);
+    }
+
+    #[test]
+    fn stable_preserves_separated_distant_skirt_self_collision() {
+        let skirt = CollisionBody {
+            is_skirt: true,
+            ..DYNAMIC_GROUP_7
+        };
+        let bodies = [skirt; 4];
+
+        let plan = build_filter_plan(
+            &bodies,
+            &[(0, 1), (1, 2), (2, 3)],
+            CollisionStabilityMode::Stable,
+        );
+
+        assert!(!plan.pairs.contains(&(0, 3)));
+        assert_eq!(plan.pairs.len(), 5);
+    }
+
+    #[test]
+    fn stable_filters_initially_overlapping_tail_and_skirt_across_groups() {
+        let bounds = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
+        let tail = CollisionBody {
+            group: 3,
+            is_tail: true,
+            initial_aabb: bounds,
+            ..DYNAMIC_GROUP_7
+        };
+        let skirt = CollisionBody {
+            group: 4,
+            is_skirt: true,
+            initial_aabb: bounds,
+            ..DYNAMIC_GROUP_7
+        };
+
+        let plan = build_filter_plan(&[tail, skirt], &[], CollisionStabilityMode::Stable);
+
+        assert_eq!(plan.pairs, vec![(0, 1)]);
+        assert_eq!(plan.filtered_initial_overlap_pairs, 1);
+    }
+
+    #[test]
+    fn stable_preserves_separated_tail_and_skirt_collision() {
+        let tail = CollisionBody {
+            group: 3,
+            is_tail: true,
+            initial_aabb: CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE),
+            ..DYNAMIC_GROUP_7
+        };
+        let skirt = CollisionBody {
+            group: 4,
+            is_skirt: true,
+            initial_aabb: CollisionAabb::from_transform(
+                Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)),
+                Vec3::ONE,
+            ),
+            ..DYNAMIC_GROUP_7
+        };
+
+        let plan = build_filter_plan(&[tail, skirt], &[], CollisionStabilityMode::Stable);
+
+        assert!(plan.pairs.is_empty());
+    }
+
+    #[test]
+    fn stable_filters_overlapping_tail_anchor_and_dynamic_skirt() {
+        let bounds = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
+        let tail_anchor = CollisionBody {
+            group: 3,
+            is_dynamic: false,
+            is_tail: true,
+            initial_aabb: bounds,
+            ..DYNAMIC_GROUP_7
+        };
+        let skirt = CollisionBody {
+            group: 4,
+            is_skirt: true,
+            initial_aabb: bounds,
+            ..DYNAMIC_GROUP_7
+        };
+
+        let plan = build_filter_plan(&[tail_anchor, skirt], &[], CollisionStabilityMode::Stable);
+
+        assert_eq!(plan.pairs, vec![(0, 1)]);
+        assert_eq!(plan.filtered_tail_anchor_skirt_pairs, 1);
+        assert_eq!(plan.preserved_dynamic_kinematic_pairs, 0);
+    }
+
+    #[test]
+    fn strict_preserves_overlapping_tail_anchor_and_dynamic_skirt() {
+        let bounds = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
+        let tail_anchor = CollisionBody {
+            group: 3,
+            is_dynamic: false,
+            is_tail: true,
+            initial_aabb: bounds,
+            ..DYNAMIC_GROUP_7
+        };
+        let skirt = CollisionBody {
+            group: 4,
+            is_skirt: true,
+            initial_aabb: bounds,
+            ..DYNAMIC_GROUP_7
+        };
+
+        let plan = build_filter_plan(&[tail_anchor, skirt], &[], CollisionStabilityMode::Strict);
+
+        assert!(plan.pairs.is_empty());
+        assert_eq!(plan.filtered_tail_anchor_skirt_pairs, 0);
+        assert_eq!(plan.preserved_dynamic_kinematic_pairs, 1);
+    }
+
+    #[test]
+    fn stable_preserves_separated_tail_anchor_and_dynamic_skirt() {
+        let tail_anchor = CollisionBody {
+            group: 3,
+            is_dynamic: false,
+            is_tail: true,
+            initial_aabb: CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE),
+            ..DYNAMIC_GROUP_7
+        };
+        let skirt = CollisionBody {
+            group: 4,
+            is_skirt: true,
+            initial_aabb: CollisionAabb::from_transform(
+                Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)),
+                Vec3::ONE,
+            ),
+            ..DYNAMIC_GROUP_7
+        };
+
+        let plan = build_filter_plan(&[tail_anchor, skirt], &[], CollisionStabilityMode::Stable);
+
+        assert!(plan.pairs.is_empty());
+        assert_eq!(plan.filtered_tail_anchor_skirt_pairs, 0);
+        assert_eq!(plan.preserved_dynamic_kinematic_pairs, 1);
+    }
+
+    #[test]
+    fn stable_does_not_extend_filter_from_skirt_to_other_dynamic_parts() {
+        let skirt = CollisionBody {
+            is_skirt: true,
+            ..DYNAMIC_GROUP_7
+        };
+        let bodies = [skirt, skirt, skirt, DYNAMIC_GROUP_7];
+
+        let plan = build_filter_plan(
+            &bodies,
+            &[(0, 1), (1, 2), (2, 3)],
+            CollisionStabilityMode::Stable,
+        );
+
+        assert!(!plan.pairs.contains(&(0, 3)));
+        assert!(plan.pairs.contains(&(1, 3)));
+    }
+
+    #[test]
     fn dynamic_kinematic_overlap_is_reported_but_not_filtered() {
         let bounds = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
         let bodies = [
@@ -396,5 +678,79 @@ mod tests {
         let plan = build_filter_plan(&bodies, &[(0, 1)], CollisionStabilityMode::Stable);
         assert!(plan.pairs.is_empty());
         assert_eq!(plan.initial_overlap_dynamic_kinematic_pairs, 1);
+    }
+
+    #[test]
+    fn overlapping_dynamic_siblings_on_kinematic_root_are_filtered() {
+        let bounds = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
+        let bodies = [
+            CollisionBody {
+                is_dynamic: false,
+                initial_aabb: bounds,
+                ..DYNAMIC_GROUP_7
+            },
+            CollisionBody {
+                initial_aabb: bounds,
+                ..DYNAMIC_GROUP_7
+            },
+            CollisionBody {
+                initial_aabb: bounds,
+                ..DYNAMIC_GROUP_7
+            },
+        ];
+
+        let plan = build_filter_plan(&bodies, &[(0, 1), (0, 2)], CollisionStabilityMode::Stable);
+
+        assert_eq!(plan.pairs, vec![(1, 2)]);
+        assert_eq!(plan.filtered_initial_overlap_pairs, 1);
+    }
+
+    #[test]
+    fn separated_dynamic_siblings_on_kinematic_root_keep_collision() {
+        let bodies = [
+            CollisionBody {
+                is_dynamic: false,
+                ..DYNAMIC_GROUP_7
+            },
+            CollisionBody {
+                initial_aabb: CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE),
+                ..DYNAMIC_GROUP_7
+            },
+            CollisionBody {
+                initial_aabb: CollisionAabb::from_transform(
+                    Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)),
+                    Vec3::ONE,
+                ),
+                ..DYNAMIC_GROUP_7
+            },
+        ];
+
+        let plan = build_filter_plan(&bodies, &[(0, 1), (0, 2)], CollisionStabilityMode::Stable);
+
+        assert!(plan.pairs.is_empty());
+    }
+
+    #[test]
+    fn strict_keeps_overlapping_dynamic_siblings_collision() {
+        let bounds = CollisionAabb::from_transform(Mat4::IDENTITY, Vec3::ONE);
+        let bodies = [
+            CollisionBody {
+                is_dynamic: false,
+                initial_aabb: bounds,
+                ..DYNAMIC_GROUP_7
+            },
+            CollisionBody {
+                initial_aabb: bounds,
+                ..DYNAMIC_GROUP_7
+            },
+            CollisionBody {
+                initial_aabb: bounds,
+                ..DYNAMIC_GROUP_7
+            },
+        ];
+
+        let plan = build_filter_plan(&bodies, &[(0, 1), (0, 2)], CollisionStabilityMode::Strict);
+
+        assert!(plan.pairs.is_empty());
     }
 }

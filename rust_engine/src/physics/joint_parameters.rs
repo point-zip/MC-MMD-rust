@@ -17,14 +17,12 @@ impl JointAxisParameters {
     fn from_raw(lower: f32, upper: f32, stiffness: f32) -> Self {
         let lower = finite_or_zero(lower);
         let upper = finite_or_zero(upper);
-        // Bullet 用 lower > upper 表示自由轴，导出器写反的区间必须先恢复顺序。
-        let (lower, upper) = if lower <= upper {
-            (lower, upper)
-        } else {
-            (upper, lower)
-        };
-        // 数值和启用状态分离，避免把零值安装成有效 motor。
-        let spring_enabled = stiffness.is_finite() && stiffness.abs() > SPRING_EPSILON;
+        // Bullet 6DOF 使用 lower > upper 表示自由轴。部分 PMX（例如横向裙摆连接）
+        // 会有意采用这种编码，因此必须保留原始顺序，不能把自由轴收紧为硬限位。
+        // 自由轴没有有效的约束区间可供 Bullet 定义弹簧回正目标；继续启用 motor
+        // 会让横向裙环在自由移动和弹簧纠偏之间持续振荡。
+        let spring_enabled =
+            lower <= upper && stiffness.is_finite() && stiffness.abs() > SPRING_EPSILON;
         Self {
             lower,
             upper,
@@ -32,6 +30,48 @@ impl JointAxisParameters {
             stiffness: if spring_enabled { stiffness.abs() } else { 0.0 },
             spring_enabled,
         }
+    }
+
+    /// 限制特定轴只允许向外旋转，屏蔽向身体内侧折倒的方向。
+    /// 确保 0.0（绑定姿态）始终落在 [lower, upper] 内，且不把受限轴损坏为 lower > upper 自由轴。
+    pub fn restrict_inward_rotation(&mut self, positive_is_outward: bool) {
+        if self.lower > self.upper {
+            // 原生声明为自由轴的无需收紧。
+            return;
+        }
+        if positive_is_outward {
+            // 正向旋转为向外，允许 [0.0, max(upper, 0.0)]
+            self.lower = 0.0;
+            self.upper = self.upper.max(0.0);
+        } else {
+            // 负向旋转为向外，允许 [min(lower, 0.0), 0.0]
+            self.lower = self.lower.min(0.0);
+            self.upper = 0.0;
+        }
+    }
+
+    /// 为缺失弹簧的有效旋转轴补入兼容刚度，不覆盖模型原本的弹簧参数。
+    pub fn install_fallback_spring(&mut self, stiffness: f32) {
+        if self.spring_enabled
+            || self.lower > self.upper
+            || self.upper - self.lower <= SPRING_EPSILON
+        {
+            return;
+        }
+
+        self.stiffness = stiffness.max(0.0);
+        self.spring_enabled = self.stiffness > SPRING_EPSILON;
+    }
+
+    /// 将有效旋转轴收紧到以绑定姿态为中心的对称范围。
+    pub fn clamp_symmetric_rotation(&mut self, angle: f32) {
+        if self.lower > self.upper || self.upper - self.lower <= SPRING_EPSILON {
+            return;
+        }
+
+        let angle = angle.abs();
+        self.lower = self.lower.max(-angle).min(0.0);
+        self.upper = self.upper.min(angle).max(0.0);
     }
 }
 
@@ -210,25 +250,29 @@ mod tests {
     }
 
     #[test]
-    fn reversed_teio_skirt_limits_are_restored_to_ordered_ranges() {
+    fn reversed_teio_skirt_limits_remain_bullet_free_axes() {
         let parameters = JointParameters::from_pmx(
             [0.035_435_125, -0.05, 0.0375],
             [-0.035_435_125, 0.05, -0.0375],
-            [0.2, -0.3, 0.4],
-            [-0.1, 0.1, -0.2],
-            [0.0; 3],
-            [0.0; 3],
+            [-0.122_173_05, -0.069_813_17, -0.122_173_05],
+            [0.122_173_05, 0.069_813_17, 0.122_173_05],
+            [-300.0, 225.0, -300.0],
+            [16.0, 8.0, 16.0],
         );
 
-        assert_eq!(parameters.linear[0].lower, -0.035_435_125);
-        assert_eq!(parameters.linear[0].upper, 0.035_435_125);
+        assert_eq!(parameters.linear[0].lower, 0.035_435_125);
+        assert_eq!(parameters.linear[0].upper, -0.035_435_125);
         assert_eq!(parameters.linear[1].lower, -0.05);
         assert_eq!(parameters.linear[1].upper, 0.05);
-        assert_eq!(parameters.linear[2].lower, -0.0375);
-        assert_eq!(parameters.linear[2].upper, 0.0375);
-        assert_eq!(parameters.angular[0].lower, -0.1);
-        assert_eq!(parameters.angular[0].upper, 0.2);
-        assert_eq!(parameters.angular[2].lower, -0.2);
-        assert_eq!(parameters.angular[2].upper, 0.4);
+        assert_eq!(parameters.linear[2].lower, 0.0375);
+        assert_eq!(parameters.linear[2].upper, -0.0375);
+        assert!(!parameters.linear[0].spring_enabled);
+        assert!(!parameters.linear[2].spring_enabled);
+        assert_eq!(parameters.linear[0].stiffness, 0.0);
+        assert_eq!(parameters.linear[2].stiffness, 0.0);
+        assert_eq!(parameters.angular[0].lower, -0.122_173_05);
+        assert_eq!(parameters.angular[0].upper, 0.122_173_05);
+        assert_eq!(parameters.angular[2].lower, -0.122_173_05);
+        assert_eq!(parameters.angular[2].upper, 0.122_173_05);
     }
 }

@@ -62,3 +62,21 @@ fn active_debug_config_is_a_build_time_snapshot() {
     assert!(snapshot.collision_enabled);
     assert!(!snapshot.kinematic_filter);
 }
+
+#[test]
+fn telemetry_counts_filtered_kinematic_noise() {
+    let mut telemetry = PhysicsDebugTelemetry::default();
+    telemetry.observe_kinematic_suppression(0.0007, 0.0004);
+    telemetry.observe_kinematic_suppression(0.0012, 0.0009);
+
+    assert_eq!(telemetry.kinematic_suppressed_count, 2);
+    assert!((telemetry.max_suppressed_translation_error - 0.0012).abs() < 1e-7);
+    assert!((telemetry.max_suppressed_rotation_error - 0.0009).abs() < 1e-7);
+}
+
+#[test]
+fn skirt_name_detection_supports_english_and_japanese_models() {
+    assert!(super::is_skirt_body_name("Sp_Hi_MSkirt0_B_00_skirt_anchor"));
+    assert!(super::is_skirt_body_name("裙_0_0"));
+    assert!(!super::is_skirt_body_name("Sp_He_Hair4_L_00_anchor"));
+}

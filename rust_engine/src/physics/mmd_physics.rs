@@ -75,6 +75,20 @@ pub struct MMDPhysics {
     model_topology_signature: String,
 }
 
+/// 供命令行诊断工具读取的关节瞬时状态。
+///
+/// 内容完全来自当前 Bullet 世界；构造快照不会写入刚体或约束参数。
+#[derive(Debug, Clone)]
+pub struct PhysicsJointSnapshot {
+    pub name: String,
+    pub body_a_name: String,
+    pub body_b_name: String,
+    pub anchor_error: f32,
+    pub anchor_a: Vec3,
+    pub anchor_b: Vec3,
+    pub diagnostic: bullet_ffi::ConstraintDiagnostic,
+}
+
 impl MMDPhysics {
     /// 创建新的物理世界（C++ OOM 时返回 None）
     pub fn new() -> Option<Self> {
@@ -750,6 +764,37 @@ impl MMDPhysics {
     }
     pub fn joint_count(&self) -> usize {
         self.joints.len()
+    }
+
+    /// 返回名称包含 `needle` 的关节当前求解状态，供独立命令行探针使用。
+    pub fn joint_snapshots_matching(&self, needle: &str) -> Vec<PhysicsJointSnapshot> {
+        self.joints
+            .iter()
+            .filter(|joint| joint.name.contains(needle))
+            .filter_map(|joint| {
+                let body_a_index = usize::try_from(joint.rigid_body_a_index).ok()?;
+                let body_b_index = usize::try_from(joint.rigid_body_b_index).ok()?;
+                let body_a = self.rigid_bodies.get(body_a_index)?.bullet_body.as_ref()?;
+                let body_b = self.rigid_bodies.get(body_b_index)?.bullet_body.as_ref()?;
+                let diagnostic = joint.constraint.as_ref()?.diagnostic()?;
+                let (anchor_error, anchor_a, anchor_b) =
+                    super::mmd_joint::joint_anchor_position_error(
+                        body_a.get_transform(),
+                        joint.frame_a,
+                        body_b.get_transform(),
+                        joint.frame_b,
+                    );
+                Some(PhysicsJointSnapshot {
+                    name: joint.name.clone(),
+                    body_a_name: self.rigid_bodies.get(body_a_index)?.name.clone(),
+                    body_b_name: self.rigid_bodies.get(body_b_index)?.name.clone(),
+                    anchor_error,
+                    anchor_a,
+                    anchor_b,
+                    diagnostic,
+                })
+            })
+            .collect()
     }
 
     /// 获取动态刚体关联的骨骼变换（复用内部缓冲区，零堆分配）

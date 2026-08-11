@@ -5,7 +5,10 @@ use std::process::ExitCode;
 
 use glam::{Mat4, Quat, Vec3};
 use mmd::pmx::rigid_body::{RigidBody, RigidBodyMode, RigidBodyShape};
-use mmd_engine::{model::load_pmx, physics::body_collider_scale_flags};
+use mmd_engine::{
+    model::{load_pmx, VertexWeight},
+    physics::body_collider_scale_flags,
+};
 
 const TARGET_NAMES: &[&str] = &[
     // TohsakaRin 奔跑时反复出现接触和限位异常的刚体。
@@ -71,6 +74,57 @@ fn is_skirt_body(body: &RigidBody) -> bool {
     NAMES
         .iter()
         .any(|name| local.contains(name) || universal.contains(name))
+}
+
+/// 判断刚体是否属于截图中同类的下装、衣带或外套动态链。
+fn is_lower_garment_body(body: &RigidBody) -> bool {
+    const NAMES: &[&str] = &[
+        "裙",
+        "スカート",
+        "skirt",
+        "petticoat",
+        "下装",
+        "下衣",
+        "裾",
+        "摆",
+        "衣摆",
+        "后摆",
+        "下摆",
+        "衣帶",
+        "衣带",
+        "外套",
+        "风衣",
+        "coat",
+        "cloak",
+        "cape",
+        "flap",
+    ];
+    let local = body.local_name.to_lowercase();
+    let universal = body.universal_name.to_lowercase();
+    NAMES
+        .iter()
+        .any(|name| local.contains(name) || universal.contains(name))
+}
+
+/// 返回顶点对指定骨骼的权重，便于确认哪一片网格会随物理骨骼移动。
+fn weight_for_bone(weight: &VertexWeight, target: i32) -> f32 {
+    match weight {
+        VertexWeight::Bdef1 { bone } => f32::from(*bone == target),
+        VertexWeight::Bdef2 { bones, weight } | VertexWeight::Sdef { bones, weight, .. } => {
+            if bones[0] == target {
+                *weight
+            } else if bones[1] == target {
+                1.0 - *weight
+            } else {
+                0.0
+            }
+        }
+        VertexWeight::Bdef4 { bones, weights } | VertexWeight::Qdef { bones, weights } => bones
+            .iter()
+            .zip(weights)
+            .filter_map(|(bone, weight)| (*bone == target).then_some(*weight))
+            .sum(),
+    }
 }
 
 fn collision_enabled(a: &RigidBody, b: &RigidBody) -> bool {
@@ -285,7 +339,7 @@ fn main() -> ExitCode {
         // 根边必须由运动学刚体连接到动态衣物刚体，避免把纵向链中段误判为根部。
         if body_a.mode == RigidBodyMode::Static
             && body_b.mode != RigidBodyMode::Static
-            && is_skirt_body(body_b)
+            && is_lower_garment_body(body_b)
         {
             println!(
                 "  #{index} {}: A=#{} {} B=#{} {} joint_pos={:?} joint_rot={:?} body_pos={:?} body_rot={:?} rot_min={:?} rot_max={:?}",
@@ -302,6 +356,49 @@ fn main() -> ExitCode {
                 joint.rotation_max,
             );
         }
+    }
+
+    println!("\n下装/衣带动态骨骼绑定:");
+    for (body_index, body) in model.rigid_bodies.iter().enumerate() {
+        if body.mode == RigidBodyMode::Static || !is_lower_garment_body(body) {
+            continue;
+        }
+        let Ok(bone_index) = usize::try_from(body.bone_index) else {
+            continue;
+        };
+        let Some(bone) = model.bone_manager.get_bone(bone_index) else {
+            continue;
+        };
+        let parent_name = bone
+            .parent_id()
+            .and_then(|parent_index| model.bone_manager.get_bone(parent_index))
+            .map_or("<根骨骼>", |parent| parent.name.as_str());
+        let (vertex_count, weight_sum) = model
+            .weights
+            .iter()
+            .map(|weight| weight_for_bone(weight, body.bone_index))
+            .filter(|weight| *weight > 0.0)
+            .fold((0usize, 0.0f32), |(count, sum), weight| {
+                (count + 1, sum + weight)
+            });
+        let connected_joints = model
+            .joints
+            .iter()
+            .filter(|joint| {
+                joint.rigid_body_a_index == body_index as i32
+                    || joint.rigid_body_b_index == body_index as i32
+            })
+            .count();
+        println!(
+            "  body=#{body_index} '{}' bone=#{bone_index} '{}' parent='{}' mode={:?} joints={} vertices={} weight_sum={:.1}",
+            body.local_name,
+            bone.name,
+            parent_name,
+            body.mode,
+            connected_joints,
+            vertex_count,
+            weight_sum,
+        );
     }
 
     println!("\n动态组 -> 可碰撞静态刚体:");

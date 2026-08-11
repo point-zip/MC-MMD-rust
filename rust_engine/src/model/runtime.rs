@@ -2642,6 +2642,16 @@ impl MmdModel {
         self.physics.is_some()
     }
 
+    /// 读取匹配名称的 Bullet 关节快照，仅供命令行物理诊断工具使用。
+    pub fn physics_joint_snapshots_matching(
+        &self,
+        needle: &str,
+    ) -> Vec<crate::physics::PhysicsJointSnapshot> {
+        self.physics
+            .as_ref()
+            .map_or_else(Vec::new, |physics| physics.joint_snapshots_matching(needle))
+    }
+
     /// 更新物理模拟（Bullet3）
     ///
     /// 流程：sync_bodies → stepSimulation → sync_bones

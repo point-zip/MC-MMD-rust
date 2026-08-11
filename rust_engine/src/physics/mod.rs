@@ -64,7 +64,7 @@ pub use bullet_ffi::{get_alloc_stats, BulletAllocStats};
 pub use collision_topology::CollisionStabilityMode;
 pub use config::{get_config, reset_config, set_config, PhysicsConfig};
 pub use mmd_joint::MmdJointData;
-pub use mmd_physics::MMDPhysics;
+pub use mmd_physics::{MMDPhysics, PhysicsJointSnapshot};
 pub use mmd_rigid_body::{
     body_collider_scale_flags, effective_collision_shape_size,
     effective_collision_shape_size_with_static_scale, MmdRigidBodyData, PhysicsMode,

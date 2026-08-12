@@ -4,6 +4,8 @@ package com.shiroha.mmdskin.player.render;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.shiroha.mmdskin.compat.iris.IrisCompat;
+import com.shiroha.mmdskin.compat.tacz.TaczFirstPersonPostRenderer;
+import com.shiroha.mmdskin.compat.tacz.TaczGunDetector;
 import com.shiroha.mmdskin.config.ModelConfigManager;
 import com.shiroha.mmdskin.config.RuntimeConfigPortHolder;
 import com.shiroha.mmdskin.config.ModelConfigData;
@@ -70,16 +72,29 @@ final class PlayerModelRenderCoordinator {
 
         MutableRenderPose params = PlayerRenderHelper.calculateMutableRenderPose(player, modelData, tickDelta);
         boolean needsPostRenderSync = selection.isLocalPlayer() && !inventoryRender && !shadowPass;
+        boolean deferTaczFirstPerson = firstPersonView
+                && !isVr
+                && reusePreparedFirstPersonPose
+                && TaczGunDetector.isGun(player.getMainHandItem())
+                && model instanceof BaseModelInstance;
 
         matrixStack.pushPose();
         try {
             if (inventoryRender) {
                 InventoryRenderHelper.renderInInventory(player, model, tickDelta, matrixStack, packedLight, size);
             } else {
-                matrixStack.scale(size[0], size[0], size[0]);
-                RenderSystem.setShader(GameRenderer::getRendertypeEntityTranslucentShader);
-                RenderScene context = firstPersonView ? RenderScene.FIRST_PERSON : RenderScene.WORLD;
-                model.render(player, params.bodyYaw, params.bodyPitch, params.translation, tickDelta, matrixStack, packedLight, context);
+                if (deferTaczFirstPerson) {
+                    // 枪械先由 TaCZ 完整绘制，MMD 在其 RETURN 后使用同帧手部锚点后置绘制。
+                    TaczFirstPersonPostRenderer.defer(player, player.getMainHandItem(), modelData,
+                            (BaseModelInstance) model, params, matrixStack, tickDelta, packedLight, size[0]);
+                    needsPostRenderSync = false;
+                } else {
+                    TaczFirstPersonPostRenderer.clearDeferredDraw();
+                    matrixStack.scale(size[0], size[0], size[0]);
+                    RenderSystem.setShader(GameRenderer::getRendertypeEntityTranslucentShader);
+                    RenderScene context = firstPersonView ? RenderScene.FIRST_PERSON : RenderScene.WORLD;
+                    model.render(player, params.bodyYaw, params.bodyPitch, params.translation, tickDelta, matrixStack, packedLight, context);
+                }
             }
 
             if (needsPostRenderSync) {

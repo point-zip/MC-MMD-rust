@@ -1,6 +1,10 @@
 //! MMD 运行时模型
 
 use crate::animation::{AnimationLayerManager, VmdAnimation};
+use crate::model::hand_attachment::find_hand_attachment;
+use crate::model::tacz_arm_targets::{
+    apply_tacz_arm_targets, TaczArmApplyOutcome, TaczArmSolverCache, TaczArmTargets,
+};
 use crate::morph::MorphManager;
 use crate::physics::MMDPhysics;
 use crate::skeleton::BoneManager;
@@ -127,6 +131,10 @@ pub struct MmdModel {
     // 物理系统
     physics: Option<MMDPhysics>,
     physics_enabled: bool,
+    /// LOD 暂停恢复后需先按当前骨骼姿态重同步，避免约束追赶旧刚体。
+    physics_resync_pending: bool,
+    /// 全局物理构建配置变化后在下一次模型更新时安全重建。
+    physics_rebuild_pending: bool,
     /// 骨骼变换缓冲区（避免每帧堆分配）
     physics_bone_transforms_buf: Vec<Mat4>,
 
@@ -219,6 +227,9 @@ pub struct MmdModel {
     vr_ik_solver: VrIkSolver,
     /// 最新一帧 VR 调试遥测
     vr_debug_state: VrDebugState,
+    /// TaCZ 第一人称腕链缓存，骨名仅首次解析。
+    tacz_arm_solver_cache: TaczArmSolverCache,
+    /// TaCZ 第三人称仅首次解析左右上臂骨索引。
 
     // ======== 矩阵插值过渡 ========
     /// 缓存的蒙皮矩阵（过渡开始时的状态）
@@ -277,6 +288,8 @@ impl MmdModel {
             model_transform: Mat4::IDENTITY,
             physics: None,
             physics_enabled: false,
+            physics_resync_pending: false,
+            physics_rebuild_pending: false,
             physics_bone_transforms_buf: Vec::new(),
             material_visible: Vec::new(),
             user_material_visible: Vec::new(),
@@ -307,6 +320,7 @@ impl MmdModel {
             vr_ik_strength: 1.0,
             vr_ik_solver: VrIkSolver::new(),
             vr_debug_state: VrDebugState::default(),
+            tacz_arm_solver_cache: TaczArmSolverCache::default(),
             transition_matrices: Vec::new(),
             transition_progress: 0.0,
             transition_duration: 0.0,
@@ -1309,7 +1323,7 @@ impl MmdModel {
     /// 更新动画（每帧调用）- 多动画层版本（CPU蒙皮模式）
     #[allow(unreachable_code)]
     pub fn tick_animation(&mut self, elapsed: f32) {
-        self.tick_animation_internal(elapsed, true);
+        self.tick_animation_internal(elapsed, true, None);
         return;
         // 更新所有动画层
         self.animation_layer_manager.update(elapsed);
@@ -1689,19 +1703,33 @@ impl MmdModel {
 
     /// 获取右手矩阵
     pub fn get_right_hand_matrix(&self) -> Mat4 {
-        let names = ["右手首", "右腕", "right_hand", "RightHand"];
-        for name in &names {
-            if let Some(idx) = self.bone_manager.find_bone_by_name(name) {
-                return self.bone_manager.get_global_transform(idx);
-            }
-        }
-        Mat4::IDENTITY
+        self.get_hand_attachment_matrix(
+            "Hand_Attach_R",
+            'R',
+            &["右手首", "右腕", "right_hand", "RightHand"],
+        )
     }
 
     /// 获取左手矩阵
     pub fn get_left_hand_matrix(&self) -> Mat4 {
-        let names = ["左手首", "左腕", "left_hand", "LeftHand"];
-        for name in &names {
+        self.get_hand_attachment_matrix(
+            "Hand_Attach_L",
+            'L',
+            &["左手首", "左腕", "left_hand", "LeftHand"],
+        )
+    }
+
+    fn get_hand_attachment_matrix(
+        &self,
+        explicit_name: &str,
+        dummy_side: char,
+        fallback_names: &[&str],
+    ) -> Mat4 {
+        // 显式挂点优先于录制时期存在多种分隔符的 MMD Dummy 命名。
+        if let Some(index) = find_hand_attachment(&self.bone_manager, explicit_name, dummy_side) {
+            return self.bone_manager.get_global_transform(index);
+        }
+        for name in fallback_names {
             if let Some(idx) = self.bone_manager.find_bone_by_name(name) {
                 return self.bone_manager.get_global_transform(idx);
             }
@@ -2337,7 +2365,7 @@ impl MmdModel {
     /// 仅更新动画（不执行 CPU 蒙皮，用于 GPU 蒙皮模式）
     #[allow(unreachable_code)]
     pub fn tick_animation_no_skinning(&mut self, elapsed: f32) {
-        self.tick_animation_internal(elapsed, false);
+        self.tick_animation_internal(elapsed, false, None);
         return;
         self.animation_layer_manager.update(elapsed);
         self.begin_animation();
@@ -2409,7 +2437,22 @@ impl MmdModel {
     // ========== 物理系统方法 ==========
 
     /// 初始化物理系统（Bullet3）
-    fn tick_animation_internal(&mut self, elapsed: f32, cpu_skinning: bool) {
+    /// 更新动画并消费一次性 TaCZ 双臂目标；目标不会保存到模型状态中。
+    pub fn tick_animation_with_tacz_targets(
+        &mut self,
+        elapsed: f32,
+        cpu_skinning: bool,
+        targets: Option<TaczArmTargets>,
+    ) -> TaczArmApplyOutcome {
+        self.tick_animation_internal(elapsed, cpu_skinning, targets)
+    }
+
+    fn tick_animation_internal(
+        &mut self,
+        elapsed: f32,
+        cpu_skinning: bool,
+        targets: Option<TaczArmTargets>,
+    ) -> TaczArmApplyOutcome {
         self.with_vrm_runtime_state(|model, runtime_state| {
             runtime_state.apply_inputs(model);
         });
@@ -2472,6 +2515,19 @@ impl MmdModel {
             self.end_physics_update();
         }
 
+        // 第一人称 TaCZ 真实锚点必须晚于物理与 VR 分支，避免手臂在同帧被再次覆盖。
+        // 第三人称不提交骨骼目标，完整保留本帧 VMD 姿态。
+        let mut tacz_outcome = TaczArmApplyOutcome::default();
+        if !self.vr_enabled {
+            if let Some(targets) = targets {
+                tacz_outcome = apply_tacz_arm_targets(
+                    &mut self.bone_manager,
+                    &mut self.tacz_arm_solver_cache,
+                    targets,
+                );
+            }
+        }
+
         self.end_animation();
 
         self.with_vrm_runtime_state(|model, runtime_state| {
@@ -2498,6 +2554,7 @@ impl MmdModel {
             }
             */
         }
+        tacz_outcome
     }
 
     pub fn init_physics(&mut self) -> bool {
@@ -2514,7 +2571,7 @@ impl MmdModel {
             }
         };
 
-        // 收集骨骼变换（复用缓冲区）
+        // 当前姿态只用于把新 Bullet 世界同步到动画帧，不能参与永久 offset 的构建。
         let bone_count = self.bone_manager.bone_count();
         self.physics_bone_transforms_buf
             .resize(bone_count, Mat4::IDENTITY);
@@ -2522,28 +2579,57 @@ impl MmdModel {
             self.physics_bone_transforms_buf[i] = self.bone_manager.get_global_transform(i);
         }
 
-        physics.build_physics(
-            &self.rigid_bodies,
-            &self.joints,
-            &self.physics_bone_transforms_buf,
-        );
+        // 参考 CySpring 的初始化时序：静态参数始终来自绑定姿态，运行姿态单独提交。
+        // PMX 绑定骨骼没有初始旋转，initial_position 已是右手模型空间的全局位置。
+        let bind_bone_transforms: Vec<Mat4> = self
+            .bone_manager
+            .links()
+            .map(|bone| Mat4::from_translation(bone.initial_position))
+            .collect();
+
+        physics.build_physics(&self.rigid_bodies, &self.joints, &bind_bone_transforms);
+        if crate::physics::config::get_config().debug_log {
+            log::info!(
+                "[Bullet3][诊断][参数基准] offset_source=pmx_bind_pose runtime_pose_separate=true bones={} rigid_bodies={} joints={}",
+                bone_count,
+                self.rigid_bodies.len(),
+                self.joints.len(),
+            );
+        }
         physics.initialize(&self.physics_bone_transforms_buf);
 
         self.physics = Some(physics);
         self.physics_enabled = true;
+        self.physics_resync_pending = false;
+        self.physics_rebuild_pending = false;
         true
     }
 
     /// 重置物理系统
     pub fn reset_physics(&mut self) {
-        if let Some(ref mut physics) = self.physics {
-            physics.reset();
+        if self.physics.is_some() {
+            // 动画切换接口通常在新动画求值前调用；延迟到下一次物理更新，
+            // 避免把上一帧物理回写姿态当成新链条的初始化姿态。
+            self.physics_resync_pending = true;
+            if crate::physics::config::get_config().debug_log {
+                log::info!("[Bullet3][PHYSICS_RESYNC_REQUEST] deferred_until_post_animation=true");
+            }
         }
     }
 
     /// 启用/禁用物理
     pub fn set_physics_enabled(&mut self, enabled: bool) {
+        if enabled && !self.physics_enabled {
+            self.physics_resync_pending = true;
+        }
         self.physics_enabled = enabled;
+    }
+
+    /// 请求在下一次更新时按最新全局配置重建物理世界。
+    pub fn request_physics_rebuild(&mut self) {
+        if self.physics.is_some() {
+            self.physics_rebuild_pending = true;
+        }
     }
 
     /// 获取物理是否启用
@@ -2554,6 +2640,16 @@ impl MmdModel {
     /// 获取物理系统是否已初始化
     pub fn has_physics(&self) -> bool {
         self.physics.is_some()
+    }
+
+    /// 读取匹配名称的 Bullet 关节快照，仅供命令行物理诊断工具使用。
+    pub fn physics_joint_snapshots_matching(
+        &self,
+        needle: &str,
+    ) -> Vec<crate::physics::PhysicsJointSnapshot> {
+        self.physics
+            .as_ref()
+            .map_or_else(Vec::new, |physics| physics.joint_snapshots_matching(needle))
     }
 
     /// 更新物理模拟（Bullet3）
@@ -2569,18 +2665,62 @@ impl MmdModel {
             return;
         }
 
-        // 收集骨骼变换（复用缓冲区，resize + 索引赋值避免 push 分支开销）
-        let bone_count = self.bone_manager.bone_count();
-        self.physics_bone_transforms_buf
-            .resize(bone_count, Mat4::IDENTITY);
-        for i in 0..bone_count {
-            self.physics_bone_transforms_buf[i] = self.bone_manager.get_global_transform(i);
+        if self.physics_rebuild_pending {
+            self.physics = None;
+            if !self.init_physics() {
+                return;
+            }
         }
+
+        self.collect_physics_bone_transforms();
 
         let model_transform = self.model_transform;
 
         // 拆分借用：先取出 physics 避免同时借用 self
         let mut physics = self.physics.take().unwrap();
+
+        let max_step_delta = physics.max_step_delta_time();
+        if !delta_time.is_finite() {
+            // 时间参数异常时不重摆动态链，避免破坏已建立的关节锚点。
+            physics.recover_after_large_delta(&self.physics_bone_transforms_buf);
+            self.physics_resync_pending = false;
+            self.physics = Some(physics);
+            return;
+        }
+
+        if delta_time <= 0.0 {
+            // 第一人称会执行零步长求值；只同步运动学刚体，不清空动态物理链。
+            physics.sync_bodies(&self.physics_bone_transforms_buf);
+            self.physics = Some(physics);
+            return;
+        }
+
+        if self.physics_resync_pending {
+            // 动画切换是显式重置：按新动画姿态重新建立动态链的初始状态。
+            if crate::physics::config::get_config().debug_log {
+                log::info!(
+                    "[Bullet3][PHYSICS_RESYNC_APPLY] reason=requested post_animation_pose=true delta_time={:.6}",
+                    delta_time,
+                );
+            }
+            physics.initialize(&self.physics_bone_transforms_buf);
+            self.physics_resync_pending = false;
+            self.physics = Some(physics);
+            return;
+        }
+
+        if delta_time > max_step_delta {
+            // 卡顿帧只清除旧速度；重新按骨骼摆放动态体会制造关节锚点失配。
+            if crate::physics::config::get_config().debug_log {
+                log::info!(
+                    "[Bullet3][PHYSICS_GAP_RECOVER] reason=large_delta preserve_dynamic_constraints=true delta_time={:.6}",
+                    delta_time,
+                );
+            }
+            physics.recover_after_large_delta(&self.physics_bone_transforms_buf);
+            self.physics = Some(physics);
+            return;
+        }
 
         // 1. 同步运动学刚体
         physics.sync_bodies_with_model_velocity(
@@ -2609,6 +2749,16 @@ impl MmdModel {
 
         // 归还所有权
         self.physics = Some(physics);
+    }
+
+    /// 收集当前骨骼全局矩阵，供初始化、重置和每帧物理同步复用。
+    fn collect_physics_bone_transforms(&mut self) {
+        let bone_count = self.bone_manager.bone_count();
+        self.physics_bone_transforms_buf
+            .resize(bone_count, Mat4::IDENTITY);
+        for i in 0..bone_count {
+            self.physics_bone_transforms_buf[i] = self.bone_manager.get_global_transform(i);
+        }
     }
 
     /// 结束物理更新，清除物理骨骼保护
@@ -2672,6 +2822,13 @@ impl MmdModel {
         } else {
             String::from("{\"error\": \"no physics\"}")
         }
+    }
+
+    /// 一次性获取已聚合完成的物理诊断，避免 Java 重复输出同一窗口。
+    pub fn take_physics_debug_diagnostic(&mut self) -> Option<String> {
+        self.physics
+            .as_mut()
+            .and_then(MMDPhysics::take_debug_diagnostic)
     }
 
     // ======== VR 联动 ========
@@ -3037,6 +3194,80 @@ mod tests {
     use crate::skeleton::BoneLink;
     use crate::vr::{VrTrackedPose, XR_TO_MODEL_SCALE};
     use crate::vrm_runtime::{ArmIkHandCalibration, BodyTrackingCalibration};
+
+    #[test]
+    fn hand_matrix_should_prefer_explicit_attachment_over_dummy_and_wrist() {
+        let mut model = MmdModel::new();
+        add_test_bone(&mut model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        add_test_bone(&mut model, "ダミー.R", Vec3::new(2.0, 0.0, 0.0));
+        add_test_bone(&mut model, "Hand_Attach_R", Vec3::new(3.0, 0.0, 0.0));
+        model.bone_manager.build_hierarchy();
+
+        assert_eq!(
+            model.get_right_hand_matrix().transform_point3(Vec3::ZERO),
+            Vec3::new(3.0, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn hand_matrix_should_fall_back_to_dummy_then_wrist() {
+        let mut dummy_model = MmdModel::new();
+        add_test_bone(&mut dummy_model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        add_test_bone(&mut dummy_model, "ダミー.R", Vec3::new(2.0, 0.0, 0.0));
+        dummy_model.bone_manager.build_hierarchy();
+
+        let mut wrist_model = MmdModel::new();
+        add_test_bone(&mut wrist_model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        wrist_model.bone_manager.build_hierarchy();
+
+        assert_eq!(
+            dummy_model
+                .get_right_hand_matrix()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(2.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            wrist_model
+                .get_right_hand_matrix()
+                .transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn hand_matrix_should_accept_common_dummy_separators() {
+        for name in ["ダミー_R", "ダミー.R", "ダミー R"] {
+            let mut model = MmdModel::new();
+            add_test_bone(&mut model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+            add_test_bone(&mut model, name, Vec3::new(2.0, 0.0, 0.0));
+            model.bone_manager.build_hierarchy();
+
+            assert_eq!(
+                model.get_right_hand_matrix().transform_point3(Vec3::ZERO),
+                Vec3::new(2.0, 0.0, 0.0),
+                "右手挂点应兼容 {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn hand_matrix_should_not_use_the_opposite_dummy_side() {
+        let mut model = MmdModel::new();
+        add_test_bone(&mut model, "右手首", Vec3::new(1.0, 0.0, 0.0));
+        add_test_bone(&mut model, "ダミー_L", Vec3::new(2.0, 0.0, 0.0));
+        model.bone_manager.build_hierarchy();
+
+        assert_eq!(
+            model.get_right_hand_matrix().transform_point3(Vec3::ZERO),
+            Vec3::new(1.0, 0.0, 0.0)
+        );
+    }
+
+    fn add_test_bone(model: &mut MmdModel, name: &str, position: Vec3) {
+        let mut bone = BoneLink::new(name.to_string());
+        bone.initial_position = position;
+        model.bone_manager.add_bone(bone);
+    }
 
     #[test]
     fn set_first_person_mode_should_restore_user_material_visibility() {

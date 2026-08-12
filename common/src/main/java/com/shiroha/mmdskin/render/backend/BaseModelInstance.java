@@ -1,6 +1,7 @@
 package com.shiroha.mmdskin.render.backend;
 
 import com.shiroha.mmdskin.bridge.runtime.NativeRenderBackendPort;
+import com.shiroha.mmdskin.config.ConfigManager;
 import com.shiroha.mmdskin.config.RuntimeConfigPortHolder;
 import com.shiroha.mmdskin.model.runtime.ModelInstance;
 import com.shiroha.mmdskin.render.scene.RenderScene;
@@ -96,6 +97,22 @@ public abstract class BaseModelInstance implements ModelInstance {
         firstPersonPoseState.discard();
     }
 
+    /** 在不重复同步实体状态的前提下，让刚提交的一次性手臂目标进入当前 prepared pose。 */
+    public boolean refreshPreparedFirstPersonPose() {
+        return firstPersonPoseState.isPrepared() && update(true);
+    }
+
+    /** 应用所有渲染后端共享的模型根变换，供 TaCZ 坐标换算复用。 */
+    public void applyModelRootTransform(PoseStack stack, float entityYaw, float entityPitch,
+                                        Vector3f entityTranslation) {
+        float degreesToRadians = (float) Math.PI / 180.0f;
+        stack.mulPose(new Quaternionf().rotateY(-entityYaw * degreesToRadians));
+        stack.mulPose(new Quaternionf().rotateX(entityPitch * degreesToRadians));
+        stack.translate(entityTranslation.x, entityTranslation.y, entityTranslation.z);
+        float scale = getModelScale();
+        stack.scale(scale, scale, scale);
+    }
+
     protected final NativeRenderBackendPort backendPort() {
         if (nativeRenderBackendPort == null) {
             throw new IllegalStateException("nativeRenderBackendPort has not been initialized");
@@ -145,6 +162,11 @@ public abstract class BaseModelInstance implements ModelInstance {
     @Override
     public void setLayerLoop(long layer, boolean loop) {
         if (model != 0) backendPort().setLayerLoop(model, layer, loop);
+    }
+
+    @Override
+    public void setLayerWeight(long layer, float weight) {
+        if (model != 0) backendPort().setLayerWeight(model, layer, weight);
     }
 
     @Override
@@ -238,8 +260,46 @@ public abstract class BaseModelInstance implements ModelInstance {
         long updateTimer = RenderPerformanceProfiler.get().startTimer();
         onUpdate(deltaTime);
         RenderPerformanceProfiler.get().endTimer(RenderPerformanceProfiler.SECTION_NATIVE_MODEL_UPDATE, updateTimer);
+        logRustDiagnostics();
+        logPhysicsDiagnostic();
         nativeUpdateRevision.incrementAndGet();
         return true;
+    }
+
+    /** 将 Rust 全局日志队列按原级别转交给 Log4j。 */
+    private void logRustDiagnostics() {
+        String records = backendPort().takeRustLogs();
+        if (records == null || records.isBlank()) {
+            return;
+        }
+
+        records.lines().filter(line -> !line.isBlank()).forEach(line -> {
+            String[] fields = line.split("\\t", 3);
+            String level = fields.length > 0 ? fields[0] : "INFO";
+            String target = fields.length > 1 ? fields[1] : "rust";
+            String message = fields.length > 2 ? fields[2] : line;
+            String formatted = "[Rust][" + target + "] " + message;
+            switch (level) {
+                case "ERROR" -> logger.error("{}", formatted);
+                case "WARN" -> logger.warn("{}", formatted);
+                case "DEBUG", "TRACE" -> logger.debug("{}", formatted);
+                default -> logger.info("{}", formatted);
+            }
+        });
+    }
+
+    /** 将 native 聚合结果显式交给 Log4j，确保 Forge/Fabric latest.log 可见。 */
+    private void logPhysicsDiagnostic() {
+        if (!ConfigManager.isPhysicsDebugLog()) {
+            return;
+        }
+        String diagnostic = backendPort().takePhysicsDebugDiagnostic(model);
+        if (diagnostic != null && !diagnostic.isBlank()) {
+            // 逐行交给 Log4j，保证每段诊断都有完整前缀且不会挤成一条超长记录。
+            diagnostic.lines()
+                    .filter(line -> !line.isBlank())
+                    .forEach(line -> logger.info("{}", line));
+        }
     }
 
     protected long getNativeUpdateRevision() {

@@ -17,6 +17,7 @@ public final class NativeRuntimeBridge implements
         NativeModelQueryPort,
         NativeMorphPort,
         NativeBoneOverridePort,
+        NativeTaczArmTargetPort,
         NativeScenePort,
         PlatformCapabilityPort {
     private static final Logger logger = LogManager.getLogger();
@@ -41,6 +42,8 @@ public final class NativeRuntimeBridge implements
                     physicsConfig.maxAngularVelocity(),
                     physicsConfig.jointsEnabled(),
                     physicsConfig.kinematicFilter(),
+                    physicsConfig.collisionEnabled(),
+                    physicsConfig.collisionStabilityMode().nativeValue(),
                     physicsConfig.debugLog());
         } catch (UnsatisfiedLinkError e) {
             logger.warn("物理配置 JNI 方法未找到，请重新编译 Rust 库");
@@ -88,6 +91,11 @@ public final class NativeRuntimeBridge implements
     }
 
     @Override
+    public void setLayerWeight(long modelHandle, long layer, float weight) {
+        nativeFunc().SetLayerWeight(modelHandle, layer, weight);
+    }
+
+    @Override
     public void resetModelPhysics(long modelHandle) {
         nativeFunc().ResetModelPhysics(modelHandle);
     }
@@ -105,6 +113,16 @@ public final class NativeRuntimeBridge implements
     @Override
     public void updateAnimationOnly(long modelHandle, float deltaTime) {
         nativeFunc().UpdateAnimationOnly(modelHandle, deltaTime);
+    }
+
+    @Override
+    public String takePhysicsDebugDiagnostic(long modelHandle) {
+        return nativeFunc().TakePhysicsDebugDiagnostic(modelHandle);
+    }
+
+    @Override
+    public String takeRustLogs() {
+        return nativeFunc().TakeRustLogs();
     }
 
     @Override
@@ -129,6 +147,46 @@ public final class NativeRuntimeBridge implements
         } else {
             nativeFunc().GetLeftHandMat(modelHandle, handMatrixHandle);
         }
+    }
+
+    @Override
+    public boolean setTaczArmTargets(long modelHandle, float[] columnMajorMatrices, int validMask) {
+        if (!isValidTaczArmTargetPacket(columnMajorMatrices, validMask)) {
+            // Java 前置校验失败也要清掉上一帧尚未消费的目标。
+            clearTaczArmTargets(modelHandle);
+            return false;
+        }
+        return nativeFunc().SetTaczArmTargets(modelHandle, columnMajorMatrices, validMask);
+    }
+
+    /** 在跨 JNI 前拒绝不完整或非有限矩阵；完整刚体校验仍由 Rust 执行。 */
+    static boolean isValidTaczArmTargetPacket(float[] columnMajorMatrices, int validMask) {
+        if (columnMajorMatrices == null || columnMajorMatrices.length != 32
+                || validMask == 0 || (validMask & ~0b11) != 0) {
+            return false;
+        }
+        for (float value : columnMajorMatrices) {
+            if (!Float.isFinite(value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public void clearTaczArmTargets(long modelHandle) {
+        nativeFunc().ClearTaczArmTargets(modelHandle);
+    }
+
+    @Override
+    public int getLastTaczArmApplyResult(long modelHandle) {
+        return nativeFunc().GetLastTaczArmApplyResult(modelHandle);
+    }
+
+    @Override
+    public boolean getLastTaczArmDiagnostics(long modelHandle, float[] output) {
+        return output != null && output.length == 24
+                && nativeFunc().GetLastTaczArmDiagnostics(modelHandle, output);
     }
 
     @Override

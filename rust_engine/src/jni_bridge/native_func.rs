@@ -6,6 +6,10 @@ use jni::JNIEnv;
 use std::ptr;
 use std::sync::Arc;
 
+use super::tacz_arm_target::{
+    clear_tacz_arm_diagnostics, clear_tacz_arm_targets, record_tacz_arm_apply_result,
+    take_tacz_arm_targets,
+};
 use crate::animation::fbx_loader;
 use crate::animation::{VmdAnimation, VmdFile};
 use crate::model::{load_pmx, load_vrm};
@@ -37,10 +41,24 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_GetVersion(
     env: JNIEnv,
     _class: JClass,
 ) -> jstring {
+    crate::jni_log::ensure_initialized();
     match env.new_string(VERSION) {
         Ok(s) => s.into_raw(),
         Err(_) => ptr::null_mut(),
     }
+}
+
+/// 一次性获取 Rust 通用日志；级别和 target 由 Java 侧映射到 Log4j。
+#[no_mangle]
+pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_TakeRustLogs(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    crate::jni_log::ensure_initialized();
+    crate::jni_log::take_buffered_logs()
+        .and_then(|message| env.new_string(message).ok())
+        .map(|message| message.into_raw())
+        .unwrap_or(ptr::null_mut())
 }
 
 /// 读取字节
@@ -158,6 +176,8 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_DeleteModel(
     _class: JClass,
     model: jlong,
 ) {
+    clear_tacz_arm_targets(model);
+    clear_tacz_arm_diagnostics(model);
     let mut models = MODELS.write().unwrap_or_else(|e| e.into_inner());
     models.remove(&model);
 }
@@ -170,11 +190,15 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_UpdateModel(
     model: jlong,
     delta_time: jfloat,
 ) {
-    let models = MODELS.read().unwrap();
+    let model_handle = model;
+    let targets = take_tacz_arm_targets(model);
+    let received_mask = targets.map_or(0, |value| value.valid_mask());
+    let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
     if let Some(model_arc) = models.get(&model) {
-        let mut model = model_arc.lock().unwrap();
+        let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
         // 更新动画（内部已包含物理更新）
-        model.tick_animation(delta_time);
+        let outcome = model.tick_animation_with_tacz_targets(delta_time, true, targets);
+        record_tacz_arm_apply_result(model_handle, received_mask, outcome);
     }
 }
 
@@ -1901,6 +1925,25 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_GetPhysicsDebugInfo(
         .unwrap_or(ptr::null_mut())
 }
 
+/// 一次性获取聚合物理诊断；无新窗口时返回 null，避免无意义的 Java 字符串分配。
+#[no_mangle]
+pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_TakePhysicsDebugDiagnostic(
+    env: JNIEnv,
+    _class: JClass,
+    model: jlong,
+) -> jstring {
+    let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
+    let Some(model_arc) = models.get(&model) else {
+        return ptr::null_mut();
+    };
+    let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
+    model
+        .take_physics_debug_diagnostic()
+        .and_then(|message| env.new_string(message).ok())
+        .map(|message| message.into_raw())
+        .unwrap_or(ptr::null_mut())
+}
+
 // ============================================================================
 // 材质可见性控制（用于脱外套等功能）
 // ============================================================================
@@ -2429,10 +2472,14 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_UpdateAnimationOnly(
     model: jlong,
     delta_time: jfloat,
 ) {
-    let models = MODELS.read().unwrap();
+    let model_handle = model;
+    let targets = take_tacz_arm_targets(model);
+    let received_mask = targets.map_or(0, |value| value.valid_mask());
+    let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
     if let Some(model_arc) = models.get(&model) {
-        let mut model = model_arc.lock().unwrap();
-        model.tick_animation_no_skinning(delta_time);
+        let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
+        let outcome = model.tick_animation_with_tacz_targets(delta_time, false, targets);
+        record_tacz_arm_apply_result(model_handle, received_mask, outcome);
     }
 }
 
@@ -3223,10 +3270,16 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_SetPhysicsConfig(
     max_angular_velocity: jfloat,
     joints_enabled: jboolean,
     kinematic_filter: jboolean,
+    collision_enabled: jboolean,
+    collision_stability_mode: jint,
     debug_log: jboolean,
 ) {
-    use crate::physics::config::{set_config, PhysicsConfig};
+    use crate::physics::config::{get_config, set_config, PhysicsConfig};
+    use crate::physics::CollisionStabilityMode;
 
+    let previous = get_config();
+    // Java 之外的旧调用方若传入未知值，也统一回退到默认 Stable。
+    let collision_stability_mode = CollisionStabilityMode::from_i32(collision_stability_mode);
     let config = PhysicsConfig {
         enabled: enabled != 0,
         gravity_y,
@@ -3236,18 +3289,38 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_SetPhysicsConfig(
         max_linear_velocity,
         max_angular_velocity,
         joints_enabled: joints_enabled != 0,
+        collision_enabled: collision_enabled != 0,
+        collision_stability_mode,
         kinematic_filter: kinematic_filter != 0,
         debug_log: debug_log != 0,
     };
 
+    // 这些参数在 Bullet 世界或 MMDPhysics 构造时缓存，变化后需重建现有模型物理。
+    let rebuild_required = previous.gravity_y != config.gravity_y
+        || previous.physics_fps != config.physics_fps
+        || previous.max_substep_count != config.max_substep_count
+        || previous.joints_enabled != config.joints_enabled
+        || previous.collision_enabled != config.collision_enabled
+        || previous.collision_stability_mode != config.collision_stability_mode
+        || previous.kinematic_filter != config.kinematic_filter;
+
     set_config(config);
+
+    if rebuild_required {
+        let models = MODELS.read().unwrap_or_else(|e| e.into_inner());
+        for model_arc in models.values() {
+            let mut model = model_arc.lock().unwrap_or_else(|e| e.into_inner());
+            model.request_physics_rebuild();
+        }
+    }
 
     if debug_log != 0 {
         log::info!(
-            "[Bullet3 物理配置] 重力={}, FPS={}, 惯性={}",
+            "[Bullet3 物理配置] 重力={}, FPS={}, 惯性={}, 碰撞稳定模式={}",
             gravity_y,
             physics_fps,
-            inertia_strength
+            inertia_strength,
+            collision_stability_mode.as_str()
         );
     }
 }

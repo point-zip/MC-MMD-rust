@@ -65,6 +65,12 @@ public final class MmdRenderRouter {
                     model, snapshot, pipeline,
                     snapshot.visibility() == MmdRenderSnapshot.Visibility.TRANSLUCENT);
             if (snapshot.context() == MmdRenderSnapshot.Context.INVENTORY) {
+                // 26.2 的 EntityRenderState 可复用：物品栏提交阶段（begin/finish 内）创建的
+                // INVENTORY snapshot 会在 GUI 画中画阶段（inventory session 未 active）被再次
+                // 提交。此时入队会抛 IllegalStateException，直接回退原版渲染。
+                if (!runtime.inventory().active()) {
+                    return Result.FALLTHROUGH;
+                }
                 runtime.inventory().enqueue(request, lease);
             } else {
                 runtime.frameQueue().enqueue(request, lease);

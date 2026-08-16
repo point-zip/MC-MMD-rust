@@ -110,10 +110,17 @@ public final class MmdGpuDrawDevice implements MmdDrawDevice, ModelGpuMetricsPor
         }
         draws.sort(DRAW_ORDER);
 
+        // 26.2 物品栏纸娃娃/PIP 走离屏渲染：PictureInPictureRenderer.prepare 期间
+        // RenderSystem.outputColorTextureOverride/outputDepthTextureOverride 指向 PIP 离屏
+        // 纹理；此时应画到离屏 target，否则画到主 target 会被 GUI 覆盖/错位。
+        GpuTextureView colorOverride = RenderSystem.outputColorTextureOverride;
+        GpuTextureView depthOverride = RenderSystem.outputDepthTextureOverride;
         RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
-        GpuTexture color = target.getColorTexture();
-        GpuTexture depth = target.useDepth ? target.getDepthTexture() : null;
-        if (color == null || target.useDepth && depth == null) {
+        GpuTextureView colorView = colorOverride != null ? colorOverride : target.getColorTextureView();
+        GpuTextureView depthView = (depthOverride != null
+                ? depthOverride
+                : (target.useDepth ? target.getDepthTextureView() : null));
+        if (colorView == null || (depthOverride == null && target.useDepth && depthView == null)) {
             closeTextureLeases(draws);
             return;
         }
@@ -122,9 +129,9 @@ public final class MmdGpuDrawDevice implements MmdDrawDevice, ModelGpuMetricsPor
         GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         try (RenderPass pass = encoder.createRenderPass(
                 () -> "MMD model pass",
-                target.getColorTextureView(),
+                colorView,
                 Optional.empty(),
-                target.useDepth ? target.getDepthTextureView() : null,
+                depthView,
                 OptionalDouble.empty())) {
             GpuBufferSlice fog = RenderSystem.getShaderFog();
             if (fog != null) {

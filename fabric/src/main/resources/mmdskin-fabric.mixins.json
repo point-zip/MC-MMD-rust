@@ -22,7 +22,9 @@
     "KeyboardInputMixin",
     "EntityMixin",
     "LevelRendererFrameMixin",
-    "HudDebugMixin"
+    "HudDebugMixin",
+    "PictureInPictureRendererMixin",
+    "GuiEntityRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

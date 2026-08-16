@@ -25,12 +25,19 @@
   #define BW_CATCH_VOID } catch (...) { return; }
   #define BW_CATCH_ZERO } catch (...) { return 0; }
   #define BW_CATCH_FALSE } catch (...) { return false; }
+  /* 构造中途失败清理：catch 后执行清理语句并返回。 */
+  #define BW_TRY_CLEANUP try {
+  #define BW_CATCH_CLEANUP(cleanup) } catch (...) { cleanup; return nullptr; }
 #else
   #define BW_TRY
   #define BW_CATCH_NULL
   #define BW_CATCH_VOID
   #define BW_CATCH_ZERO
   #define BW_CATCH_FALSE
+  /* -fno-exceptions 下 new 失败直接 abort（build.rs 注释已声明），
+   * 无需 catch；展开为空即可，不能出现 try/catch 字面量。 */
+  #define BW_TRY_CLEANUP
+  #define BW_CATCH_CLEANUP(cleanup)
 #endif
 
 // LinearMath
@@ -128,30 +135,30 @@ struct BW_World {
 };
 
 BW_World* bw_world_create(float gravity_x, float gravity_y, float gravity_z) {
-    BW_TRY
-    BW_World* w = new BW_World();
-    try {
-        w->config     = new btDefaultCollisionConfiguration();
-        w->dispatcher = new btCollisionDispatcher(w->config);
-        w->broadphase = new btDbvtBroadphase();
-        w->solver     = new btSequentialImpulseConstraintSolver();
-        w->world      = new btDiscreteDynamicsWorld(
-            w->dispatcher, w->broadphase, w->solver, w->config);
-    } catch (...) {
-        // 构造中途失败：逆序释放已分配对象，避免泄漏。
-        delete w->world;
-        delete w->solver;
-        delete w->broadphase;
-        delete w->dispatcher;
-        delete w->config;
-        delete w;
-        return nullptr;
-    }
+    // w 声明在 try 外，构造中途失败时 catch 才能安全清理（new 失败时为 nullptr）。
+    BW_World* w = nullptr;
+    BW_TRY_CLEANUP
+    w = new BW_World();
+    w->config     = new btDefaultCollisionConfiguration();
+    w->dispatcher = new btCollisionDispatcher(w->config);
+    w->broadphase = new btDbvtBroadphase();
+    w->solver     = new btSequentialImpulseConstraintSolver();
+    w->world      = new btDiscreteDynamicsWorld(
+        w->dispatcher, w->broadphase, w->solver, w->config);
     w->world->setGravity(btVector3(gravity_x, gravity_y, gravity_z));
     w->kinematicFilter = nullptr;
     g_alloc_worlds.fetch_add(1, std::memory_order_relaxed);
     return w;
-    BW_CATCH_NULL
+    // 构造中途失败：逆序释放已分配对象，避免泄漏。
+    BW_CATCH_CLEANUP(
+        if (w != nullptr) {
+            delete w->world;
+            delete w->solver;
+            delete w->broadphase;
+            delete w->dispatcher;
+            delete w->config;
+            delete w;
+        })
 }
 
 void bw_world_destroy(BW_World* w) {
@@ -358,14 +365,12 @@ BW_RigidBody* bw_rigid_body_create(const BW_RigidBodyInfo* info) {
     rbInfo.m_additionalDamping = info->additional_damping;
     
     btRigidBody* body;
-    try {
-        body = new btRigidBody(rbInfo);
-    } catch (...) {
-        // new btRigidBody 抛异常时释放已分配的 MotionState 并回滚计数。
+    BW_TRY_CLEANUP
+    body = new btRigidBody(rbInfo);
+    // new btRigidBody 抛异常时释放已分配的 MotionState 并回滚计数。
+    BW_CATCH_CLEANUP(
         delete motionState;
-        g_alloc_motion_states.fetch_sub(1, std::memory_order_relaxed);
-        return nullptr;
-    }
+        g_alloc_motion_states.fetch_sub(1, std::memory_order_relaxed);)
     
     if (info->is_kinematic) {
         body->setCollisionFlags(

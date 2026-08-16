@@ -1,0 +1,101 @@
+name: CI Build & Test (1.20-vr)
+
+# 1.20-vr 分支专用编译验证。
+# 该分支已移除 Bullet3 git submodule，改为按固定 commit 克隆
+# （与 common/build.gradle 的 prepareBullet3Sources 保持一致），
+# 通用发布流程仍由 build-mod.yml 负责。
+
+on:
+  push:
+    branches: [1.20-vr]
+  pull_request:
+    branches: [1.20-vr]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  BULLET3_COMMIT: 63c4d67e337017f9d8b298c900e9aabdb69296e7
+  BULLET3_REPO: https://github.com/bulletphysics/bullet3.git
+
+jobs:
+  # ==================== Rust 原生库：Linux 测试 + 构建 ====================
+  rust-test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path rust_engine/Cargo.toml
+
+      - name: Build release library
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x64
+          path: rust_engine/target/release/libmmd_engine.so
+
+  # ==================== Rust 原生库：Windows 构建 ====================
+  rust-build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        shell: bash
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Build Windows DLL
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-x64
+          path: rust_engine/target/release/mmd_engine.dll
+
+  # ==================== Java 模组：编译验证 ====================
+  java-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # Rust 原生库由上面的 rust-* job 单独验证；这里跳过 native 任务只编译 Java。
+      - name: Compile common / fabric / forge
+        run: ./gradlew :common:compileJava :fabric:compileJava :forge:compileJava --no-daemon -x :common:buildRustNative -x :common:prepareNativeResources

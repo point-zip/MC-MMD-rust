@@ -1,0 +1,499 @@
+name: Release Universal (1.20-vr)
+
+# 1.20-vr 分支专用发布流水线：
+# 构建全平台原生库 → 打包全平台通用 (universal) mod jar → 打 tag 时自动发布 GitHub Releases。
+# 与 ci-1.20-vr.yml（编译验证）分工；与 build-mod.yml（其他分支的通用发布）互不影响。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  BULLET3_COMMIT: 63c4d67e337017f9d8b298c900e9aabdb69296e7
+  BULLET3_REPO: https://github.com/bulletphysics/bullet3.git
+
+jobs:
+  # ==================== 原生库：Windows x64 ====================
+  native-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        shell: bash
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Build Windows x64 DLL
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-x64
+          path: rust_engine/target/release/mmd_engine.dll
+
+  # ==================== 原生库：Windows ARM64 ====================
+  native-windows-arm64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        shell: bash
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Build Windows ARM64 DLL
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target aarch64-pc-windows-msvc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-arm64
+          path: rust_engine/target/aarch64-pc-windows-msvc/release/mmd_engine.dll
+
+  # ==================== 原生库：Linux x64 ====================
+  native-linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Build Linux x64 SO
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x64
+          path: rust_engine/target/release/libmmd_engine.so
+
+  # ==================== 原生库：Linux ARM64 ====================
+  native-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build Linux ARM64 SO
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target aarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-arm64
+          path: rust_engine/target/aarch64-unknown-linux-gnu/release/libmmd_engine.so
+
+  # ==================== 原生库：Linux LoongArch64 ====================
+  native-linux-loongarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: loongarch64-unknown-linux-gnu
+
+      - name: Install LoongArch64 cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install gcc-14-loongarch64-linux-gnu g++-14-loongarch64-linux-gnu -y
+          sudo update-alternatives \
+            --install /usr/bin/loongarch64-linux-gnu-gcc loongarch64-linux-gnu-gcc /usr/bin/loongarch64-linux-gnu-gcc-14 100 \
+            --slave /usr/bin/loongarch64-linux-gnu-g++ loongarch64-linux-gnu-g++ /usr/bin/loongarch64-linux-gnu-g++-14 \
+            --slave /usr/bin/loongarch64-linux-gnu-gcc-ar loongarch64-linux-gnu-gcc-ar /usr/bin/loongarch64-linux-gnu-gcc-ar-14 \
+            --slave /usr/bin/loongarch64-linux-gnu-gcc-nm loongarch64-linux-gnu-gcc-nm /usr/bin/loongarch64-linux-gnu-gcc-nm-14 \
+            --slave /usr/bin/loongarch64-linux-gnu-gcc-ranlib loongarch64-linux-gnu-gcc-ranlib /usr/bin/loongarch64-linux-gnu-gcc-ranlib-14 \
+            --slave /usr/bin/loongarch64-linux-gnu-gcov loongarch64-linux-gnu-gcov /usr/bin/loongarch64-linux-gnu-gcov-14
+          sudo update-alternatives \
+            --install /usr/bin/loongarch64-linux-gnu-cpp loongarch64-linux-gnu-cpp /usr/bin/loongarch64-linux-gnu-cpp-14 100
+
+      - name: Build Linux LoongArch64 SO
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target loongarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER: loongarch64-linux-gnu-gcc
+          CC_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-gcc
+          CXX_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-g++
+          AR_loongarch64_unknown_linux_gnu: loongarch64-linux-gnu-ar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-loongarch64
+          path: rust_engine/target/loongarch64-unknown-linux-gnu/release/libmmd_engine.so
+
+  # ==================== 原生库：Linux RISC-V 64 ====================
+  native-linux-riscv64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv64gc-unknown-linux-gnu
+
+      - name: Install RISC-V 64 cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+
+      - name: Build Linux RISC-V 64 SO
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target riscv64gc-unknown-linux-gnu
+        env:
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+          CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
+          CXX_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-g++
+          AR_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-ar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-riscv64
+          path: rust_engine/target/riscv64gc-unknown-linux-gnu/release/libmmd_engine.so
+
+  # ==================== 原生库：macOS x64 ====================
+  native-macos-x64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Build macOS x64 dylib
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target x86_64-apple-darwin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-macos-x64
+          path: rust_engine/target/x86_64-apple-darwin/release/libmmd_engine.dylib
+
+  # ==================== 原生库：macOS ARM64 ====================
+  native-macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_engine
+
+      - name: Build macOS ARM64 dylib
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-macos-arm64
+          path: rust_engine/target/aarch64-apple-darwin/release/libmmd_engine.dylib
+
+  # ==================== 原生库：Android ARM64 ====================
+  native-android-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build Android ARM64 SO
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target aarch64-linux-android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CC_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CXX_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
+          AR_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-android-arm64
+          path: rust_engine/target/aarch64-linux-android/release/libmmd_engine.so
+
+  # ==================== 原生库：Android AMD64 ====================
+  native-android-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Bullet3 (pinned commit)
+        run: |
+          git clone --no-checkout "$BULLET3_REPO" rust_engine/deps/bullet3
+          git -C rust_engine/deps/bullet3 checkout --detach "$BULLET3_COMMIT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build Android AMD64 SO
+        run: cargo build --release --manifest-path rust_engine/Cargo.toml --target x86_64-linux-android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang
+          CC_x86_64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang
+          CXX_x86_64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
+          AR_x86_64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-android-amd64
+          path: rust_engine/target/x86_64-linux-android/release/libmmd_engine.so
+
+  # ==================== 通用 jar 打包 ====================
+  universal:
+    needs: [
+      native-windows-x64, native-windows-arm64,
+      native-linux-x64, native-linux-arm64, native-linux-loongarch64, native-linux-riscv64,
+      native-macos-x64, native-macos-arm64,
+      native-android-arm64, native-android-amd64,
+    ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract mod version
+        id: version
+        run: |
+          MOD_VERSION=$(grep "version = '" build.gradle | head -1 | sed "s/.*version = '//" | sed "s/'.*//")
+          echo "mod_version=$MOD_VERSION" >> $GITHUB_OUTPUT
+          echo "提取到模组版本: $MOD_VERSION"
+
+      - name: Download all native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native-libs
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Copy ALL natives to resources
+        env:
+          NDK_PATH: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          mkdir -p common/src/main/resources/natives/windows-x64
+          mkdir -p common/src/main/resources/natives/windows-arm64
+          mkdir -p common/src/main/resources/natives/linux-x64
+          mkdir -p common/src/main/resources/natives/linux-arm64
+          mkdir -p common/src/main/resources/natives/linux-loongarch64
+          mkdir -p common/src/main/resources/natives/linux-riscv64
+          mkdir -p common/src/main/resources/natives/macos-x64
+          mkdir -p common/src/main/resources/natives/macos-arm64
+          mkdir -p common/src/main/resources/natives/android-arm64
+          mkdir -p common/src/main/resources/natives/android-amd64
+          cp native-libs/native-windows-x64/mmd_engine.dll common/src/main/resources/natives/windows-x64/
+          cp native-libs/native-windows-arm64/mmd_engine.dll common/src/main/resources/natives/windows-arm64/
+          cp native-libs/native-linux-x64/libmmd_engine.so common/src/main/resources/natives/linux-x64/
+          cp native-libs/native-linux-arm64/libmmd_engine.so common/src/main/resources/natives/linux-arm64/
+          cp native-libs/native-linux-loongarch64/libmmd_engine.so common/src/main/resources/natives/linux-loongarch64/
+          cp native-libs/native-linux-riscv64/libmmd_engine.so common/src/main/resources/natives/linux-riscv64/
+          cp native-libs/native-macos-x64/libmmd_engine.dylib common/src/main/resources/natives/macos-x64/
+          cp native-libs/native-macos-arm64/libmmd_engine.dylib common/src/main/resources/natives/macos-arm64/
+          cp native-libs/native-android-arm64/libmmd_engine.so common/src/main/resources/natives/android-arm64/
+          cp native-libs/native-android-amd64/libmmd_engine.so common/src/main/resources/natives/android-amd64/
+          cp "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" common/src/main/resources/natives/android-arm64/
+          cp "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so" common/src/main/resources/natives/android-amd64/
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # 原生库已手动拷贝进 resources，跳过 gradle 的 Rust 重建。
+      - name: Build with Gradle
+        run: ./gradlew build --no-daemon -x test -x buildRustNative -x prepareNativeResources
+
+      - name: Rename JARs to universal
+        run: |
+          cd fabric/build/libs
+          for f in mmdskin-fabric-*.jar; do
+            case "$f" in *-dev*|*-sources*) continue;; esac
+            mv "$f" "${f%.jar}-universal.jar"
+          done
+          cd ../../../forge/build/libs
+          for f in mmdskin-forge-*.jar; do
+            case "$f" in *-dev*|*-sources*) continue;; esac
+            mv "$f" "${f%.jar}-universal.jar"
+          done
+
+      - name: Upload Universal Fabric Mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmdskin-fabric-${{ steps.version.outputs.mod_version }}-universal
+          path: |
+            fabric/build/libs/*-universal.jar
+          if-no-files-found: error
+
+      - name: Upload Universal Forge Mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmdskin-forge-${{ steps.version.outputs.mod_version }}-universal
+          path: |
+            forge/build/libs/*-universal.jar
+          if-no-files-found: error
+
+  # ==================== 发布 GitHub Releases ====================
+  release:
+    needs: [universal]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename native artifacts for clarity
+        run: |
+          mv artifacts/native-windows-x64/mmd_engine.dll "artifacts/native-windows-x64/mmd_engine-windows-x64_${GITHUB_REF_NAME}.dll"
+          mv artifacts/native-windows-arm64/mmd_engine.dll "artifacts/native-windows-arm64/mmd_engine-windows-arm64_${GITHUB_REF_NAME}.dll"
+          mv artifacts/native-linux-x64/libmmd_engine.so "artifacts/native-linux-x64/libmmd_engine-linux-x64_${GITHUB_REF_NAME}.so"
+          mv artifacts/native-linux-arm64/libmmd_engine.so "artifacts/native-linux-arm64/libmmd_engine-linux-arm64_${GITHUB_REF_NAME}.so"
+          mv artifacts/native-linux-loongarch64/libmmd_engine.so "artifacts/native-linux-loongarch64/libmmd_engine-linux-loongarch64_${GITHUB_REF_NAME}.so"
+          mv artifacts/native-linux-riscv64/libmmd_engine.so "artifacts/native-linux-riscv64/libmmd_engine-linux-riscv64_${GITHUB_REF_NAME}.so"
+          mv artifacts/native-macos-x64/libmmd_engine.dylib "artifacts/native-macos-x64/libmmd_engine-macos-x64_${GITHUB_REF_NAME}.dylib"
+          mv artifacts/native-macos-arm64/libmmd_engine.dylib "artifacts/native-macos-arm64/libmmd_engine-macos-arm64_${GITHUB_REF_NAME}.dylib"
+          mv artifacts/native-android-arm64/libmmd_engine.so "artifacts/native-android-arm64/libmmd_engine-android-arm64_${GITHUB_REF_NAME}.so"
+          mv artifacts/native-android-amd64/libmmd_engine.so "artifacts/native-android-amd64/libmmd_engine-android-amd64_${GITHUB_REF_NAME}.so"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/mmdskin-fabric-*/*.jar
+            artifacts/mmdskin-forge-*/*.jar
+            artifacts/native-windows-x64/*.dll
+            artifacts/native-windows-arm64/*.dll
+            artifacts/native-linux-x64/*.so
+            artifacts/native-linux-arm64/*.so
+            artifacts/native-linux-loongarch64/*.so
+            artifacts/native-linux-riscv64/*.so
+            artifacts/native-macos-x64/*.dylib
+            artifacts/native-macos-arm64/*.dylib
+            artifacts/native-android-arm64/*.so
+            artifacts/native-android-amd64/*.so
+          generate_release_notes: true

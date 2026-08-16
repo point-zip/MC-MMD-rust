@@ -251,10 +251,12 @@ mod ffi {
     }
 }
 
-// Bullet3 约束参数常量
+// Bullet3 约束参数常量（与 btTypedConstraint.h 的枚举一致：
+// BT_CONSTRAINT_ERP=1, BT_CONSTRAINT_STOP_ERP=2, BT_CONSTRAINT_CFM=3,
+// BT_CONSTRAINT_STOP_CFM=4）
 pub const BT_CONSTRAINT_STOP_ERP: i32 = 2;
 #[allow(dead_code)]
-pub const BT_CONSTRAINT_STOP_CFM: i32 = 3;
+pub const BT_CONSTRAINT_STOP_CFM: i32 = 4;
 
 // 激活状态常量
 #[allow(dead_code)]

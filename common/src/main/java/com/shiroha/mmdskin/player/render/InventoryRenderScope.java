@@ -23,4 +23,13 @@ public final class InventoryRenderScope {
     public static boolean isActive() {
         return DEPTH.get() > 0;
     }
+
+    /**
+     * 无条件清空当前线程的作用域标记。背包 GUI 的 enter/exit 由 Mixin 在
+     * HEAD/RETURN 注入，目标方法抛异常时 RETURN 不执行会导致深度残留；
+     * 每帧渲染开始前调用一次可保证作用域只在背包预览窗口内有意义。
+     */
+    public static void reset() {
+        DEPTH.remove();
+    }
 }

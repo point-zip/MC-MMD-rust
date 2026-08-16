@@ -3277,6 +3277,24 @@ pub extern "system" fn Java_com_shiroha_mmdskin_NativeFunc_SetPhysicsConfig(
     use crate::physics::config::{get_config, set_config, PhysicsConfig};
     use crate::physics::CollisionStabilityMode;
 
+    // JNI 传入的浮点参数不做信任：非有限值回退默认，速度类取绝对值，
+    // FPS/子步数 clamp 到合法范围，避免 0/NaN/负值把 Bullet 世界推入发散。
+    let default = PhysicsConfig::default();
+    let finite_or = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
+    let abs_or = |value: f32, fallback: f32| {
+        if value.is_finite() {
+            value.abs()
+        } else {
+            fallback
+        }
+    };
+    let gravity_y = finite_or(gravity_y, default.gravity_y);
+    let physics_fps = finite_or(physics_fps, default.physics_fps).clamp(1.0, 240.0);
+    let max_substep_count = max_substep_count.clamp(1, 64);
+    let inertia_strength = abs_or(inertia_strength, default.inertia_strength);
+    let max_linear_velocity = abs_or(max_linear_velocity, default.max_linear_velocity);
+    let max_angular_velocity = abs_or(max_angular_velocity, default.max_angular_velocity);
+
     let previous = get_config();
     // Java 之外的旧调用方若传入未知值，也统一回退到默认 Stable。
     let collision_stability_mode = CollisionStabilityMode::from_i32(collision_stability_mode);

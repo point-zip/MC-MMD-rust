@@ -71,9 +71,11 @@ typedef struct {
 #define BW_DISABLE_DEACTIVATION 4
 #define BW_DISABLE_SIMULATION 5
 
-/* Bullet3 约束参数常量 */
+/* Bullet3 约束参数常量（与 btTypedConstraint.h 的枚举一致：
+ * BT_CONSTRAINT_ERP=1, BT_CONSTRAINT_STOP_ERP=2, BT_CONSTRAINT_CFM=3,
+ * BT_CONSTRAINT_STOP_CFM=4） */
 #define BW_CONSTRAINT_STOP_ERP 2
-#define BW_CONSTRAINT_STOP_CFM 3
+#define BW_CONSTRAINT_STOP_CFM 4
 
 /* ===== 刚体构建信息 ===== */
 typedef struct {

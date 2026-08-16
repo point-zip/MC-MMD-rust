@@ -109,8 +109,15 @@ final class OpenGlModelRenderer {
         }
         target.firstPersonIndexBuffer.position(0);
         target.firstPersonIndexBuffer.limit(indexCount * target.indexElementSize);
-        // EBO 绑定属于当前 VAO 状态。使用 DSA 上传，避免破坏 Minecraft 动画方块共用的 VAO。
-        GL46C.glNamedBufferSubData(target.firstPersonIndexBufferObject, 0, target.firstPersonIndexBuffer);
+        // EBO 绑定属于当前 VAO 状态。上传后恢复原绑定，避免破坏 Minecraft
+        // 动画方块共用的 VAO。
+        int previousElementArrayBuffer = GL46C.glGetInteger(GL46C.GL_ELEMENT_ARRAY_BUFFER_BINDING);
+        try {
+            GL46C.glBindBuffer(GL46C.GL_ELEMENT_ARRAY_BUFFER, target.firstPersonIndexBufferObject);
+            GL46C.glBufferSubData(GL46C.GL_ELEMENT_ARRAY_BUFFER, 0, target.firstPersonIndexBuffer);
+        } finally {
+            GL46C.glBindBuffer(GL46C.GL_ELEMENT_ARRAY_BUFFER, previousElementArrayBuffer);
+        }
         RenderPerformanceProfiler.get().recordTransfer(TransferKind.FIRST_PERSON_INDEX,
                 (long) indexCount * target.indexElementSize);
         target.firstPersonIndexBuffer.clear();

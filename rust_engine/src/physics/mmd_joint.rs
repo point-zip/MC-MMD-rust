@@ -180,6 +180,11 @@ fn apply_skirt_root_outward_limit(
     {
         return;
     }
+    // 半轴化会改写作者提供的对称限位，只允许在没有任何旋转弹簧的关节上做，
+    // 否则弹簧会持续把摆片拉向被砍掉的方向，与作者意图冲突。
+    if parameters.angular.iter().any(|axis| axis.spring_enabled) {
+        return;
+    }
 
     let center_offset = dynamic_body_position - joint_position;
     let radial = Vec3::new(center_offset.x, 0.0, center_offset.z).length();

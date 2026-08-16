@@ -31,7 +31,7 @@ public abstract class TaczRightHandRenderMixin {
     }
 
     // 只取消 TaCZ 已入队委托中的方块手臂调用；不改写或取消 gunModel 的 delegate 队列。
-    @Redirect(method = "lambda$render$0(Lorg/joml/Matrix3f;Lorg/joml/Matrix4f;Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;Lnet/minecraft/world/item/ItemDisplayContext;II)V", at = @At(value = "INVOKE", target = "Lcom/tacz/guns/util/RenderHelper;renderFirstPersonArm(Lnet/minecraft/client/player/LocalPlayer;Lnet/minecraft/world/entity/HumanoidArm;Lcom/mojang/blaze3d/vertex/PoseStack;I)V"), remap = false, require = 1)
+    @Redirect(method = "lambda$render$0(Lorg/joml/Matrix3f;Lorg/joml/Matrix4f;Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;Lnet/minecraft/world/item/ItemDisplayContext;II)V", at = @At(value = "INVOKE", target = "Lcom/tacz/guns/util/RenderHelper;renderFirstPersonArm(Lnet/minecraft/client/player/LocalPlayer;Lnet/minecraft/world/entity/HumanoidArm;Lcom/mojang/blaze3d/vertex/PoseStack;I)V"), remap = false, require = 0)
     private static void mmdskin$cancelOriginalRightArm(LocalPlayer player, HumanoidArm hand, PoseStack poseStack, int light) {
         if (!TaczFirstPersonFrameSnapshot.shouldSuppressOriginalArm(player,
                 TaczFirstPersonFrameSnapshot.Hand.RIGHT, Minecraft.getInstance().isSameThread())) {

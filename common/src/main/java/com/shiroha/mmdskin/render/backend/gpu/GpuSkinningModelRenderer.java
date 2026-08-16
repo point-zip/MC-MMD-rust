@@ -133,8 +133,15 @@ final class GpuSkinningModelRenderer {
         }
         target.firstPersonIndexBuffer.position(0);
         target.firstPersonIndexBuffer.limit(indexCount * target.indexElementSize);
-        // EBO 绑定属于当前 VAO 状态。此处发生在绑定 MMD VAO 之前，不能污染 Minecraft 正在使用的 VAO。
-        GL46C.glNamedBufferSubData(target.firstPersonIndexBufferObject, 0, target.firstPersonIndexBuffer);
+        // EBO 绑定属于当前 VAO 状态。此处发生在绑定 MMD VAO 之前，上传后恢复
+        // 原绑定，避免污染 Minecraft 正在使用的 VAO。
+        int previousElementArrayBuffer = GL46C.glGetInteger(GL46C.GL_ELEMENT_ARRAY_BUFFER_BINDING);
+        try {
+            GL46C.glBindBuffer(GL46C.GL_ELEMENT_ARRAY_BUFFER, target.firstPersonIndexBufferObject);
+            GL46C.glBufferSubData(GL46C.GL_ELEMENT_ARRAY_BUFFER, 0, target.firstPersonIndexBuffer);
+        } finally {
+            GL46C.glBindBuffer(GL46C.GL_ELEMENT_ARRAY_BUFFER, previousElementArrayBuffer);
+        }
         RenderPerformanceProfiler.get().recordTransfer(TransferKind.FIRST_PERSON_INDEX,
                 (long) indexCount * target.indexElementSize);
         target.firstPersonIndexBuffer.clear();

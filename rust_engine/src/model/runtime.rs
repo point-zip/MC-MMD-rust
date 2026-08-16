@@ -2515,8 +2515,17 @@ impl MmdModel {
             self.end_physics_update();
         }
 
-        // 第一人称 TaCZ 真实锚点必须晚于物理与 VR 分支，避免手臂在同帧被再次覆盖。
-        // 第三人称不提交骨骼目标，完整保留本帧 VMD 姿态。
+        self.end_animation();
+
+        self.with_vrm_runtime_state(|model, runtime_state| {
+            runtime_state.refresh_output(model);
+        });
+
+        self.apply_transition_blend(elapsed);
+
+        // 第一人称 TaCZ 真实锚点必须晚于物理、VR 分支与过渡混合，避免手臂
+        // 在同帧被覆盖或过渡 lerp 稀释 IK 结果。第三人称不提交骨骼目标，
+        // 完整保留本帧 VMD 姿态。
         let mut tacz_outcome = TaczArmApplyOutcome::default();
         if !self.vr_enabled {
             if let Some(targets) = targets {
@@ -2527,14 +2536,6 @@ impl MmdModel {
                 );
             }
         }
-
-        self.end_animation();
-
-        self.with_vrm_runtime_state(|model, runtime_state| {
-            runtime_state.refresh_output(model);
-        });
-
-        self.apply_transition_blend(elapsed);
 
         if cpu_skinning {
             self.update();
@@ -2668,6 +2669,10 @@ impl MmdModel {
         if self.physics_rebuild_pending {
             self.physics = None;
             if !self.init_physics() {
+                // 重建失败（如 Bullet 世界创建失败）时清除 pending 标志，
+                // 否则下一帧会在 physics.is_none() 处提前返回，标志永不消费，
+                // 物理被永久关闭直到外部手动翻转开关。
+                self.physics_rebuild_pending = false;
                 return;
             }
         }
@@ -2690,7 +2695,9 @@ impl MmdModel {
 
         if delta_time <= 0.0 {
             // 第一人称会执行零步长求值；只同步运动学刚体，不清空动态物理链。
+            // 同时重置模型位移历史，避免连续零步长帧后位移被跨帧高估为惯性速度。
             physics.sync_bodies(&self.physics_bone_transforms_buf);
+            physics.reset_motion_history();
             self.physics = Some(physics);
             return;
         }

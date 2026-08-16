@@ -10,6 +10,7 @@ import com.shiroha.mmdskin.player.animation.AnimationStateManager;
 import com.shiroha.mmdskin.player.model.PlayerModelResolver;
 import com.shiroha.mmdskin.player.port.VrRuntimePort;
 import com.shiroha.mmdskin.player.render.InventoryRenderHelper;
+import com.shiroha.mmdskin.player.render.InventoryRenderScope;
 import com.shiroha.mmdskin.player.render.PlayerRenderHelper;
 import com.shiroha.mmdskin.render.backend.BaseModelInstance;
 import com.shiroha.mmdskin.render.scene.MutableRenderPose;
@@ -92,9 +93,13 @@ public final class FirstPersonManager {
     }
 
     /**
-     * 在 Camera.setup 前准备本地玩家当前帧的双眼锚点。
+     * 在 renderLevel 阶段（Camera.setup 之后、玩家实体渲染之前）准备本地玩家
+     * 当前帧的双眼锚点。注意：实际注入点在 GameRenderer.renderLevel 的 HEAD，
+     * 位于 Camera.setup 之后。
      */
     public static void prepareCameraFrame(float partialTick) {
+        // 每帧无条件重置背包渲染作用域，防止 Mixin 异常路径残留深度标记。
+        InventoryRenderScope.reset();
         discardPreparedFirstPersonPose();
 
         Minecraft minecraft = Minecraft.getInstance();

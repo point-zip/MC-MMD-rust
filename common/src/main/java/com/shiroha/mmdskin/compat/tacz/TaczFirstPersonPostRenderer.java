@@ -178,9 +178,11 @@ public final class TaczFirstPersonPostRenderer {
             }
             FirstPersonManager.postRender(modelHandle, draw.player, draw.tickDelta);
         } finally {
+            // 先释放 ThreadLocal 引用，再执行 JNI 清理，避免 JNI 抛异常时
+            // 残留持有 player/gunStack/model 强引用的上下文到下一帧。
+            DEFERRED_DRAW.remove();
             targetPort.clearTaczArmTargets(modelHandle);
             draw.model.discardPreparedFirstPersonPose();
-            DEFERRED_DRAW.remove();
         }
     }
 

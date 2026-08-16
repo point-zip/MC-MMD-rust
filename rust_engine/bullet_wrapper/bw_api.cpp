@@ -15,13 +15,22 @@
  * so std::nothrow placement new is not available.
  * On MSVC (/EHsc), use try-catch to handle allocation failure.
  * On other platforms (-fno-exceptions), OOM will abort.
+ *
+ * 除构造类函数外，所有 extern "C" 导出都必须包裹 BW_TRY/BW_CATCH_*，
+ * 否则 Bullet 求解/碰撞分派内部的分配失败异常会穿过 C 边界进入 Rust（UB）。
  */
 #if defined(_MSC_VER) || defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   #define BW_TRY try {
   #define BW_CATCH_NULL } catch (...) { return nullptr; }
+  #define BW_CATCH_VOID } catch (...) { return; }
+  #define BW_CATCH_ZERO } catch (...) { return 0; }
+  #define BW_CATCH_FALSE } catch (...) { return false; }
 #else
   #define BW_TRY
   #define BW_CATCH_NULL
+  #define BW_CATCH_VOID
+  #define BW_CATCH_ZERO
+  #define BW_CATCH_FALSE
 #endif
 
 // LinearMath
@@ -121,12 +130,23 @@ struct BW_World {
 BW_World* bw_world_create(float gravity_x, float gravity_y, float gravity_z) {
     BW_TRY
     BW_World* w = new BW_World();
-    w->config     = new btDefaultCollisionConfiguration();
-    w->dispatcher = new btCollisionDispatcher(w->config);
-    w->broadphase = new btDbvtBroadphase();
-    w->solver     = new btSequentialImpulseConstraintSolver();
-    w->world      = new btDiscreteDynamicsWorld(
-        w->dispatcher, w->broadphase, w->solver, w->config);
+    try {
+        w->config     = new btDefaultCollisionConfiguration();
+        w->dispatcher = new btCollisionDispatcher(w->config);
+        w->broadphase = new btDbvtBroadphase();
+        w->solver     = new btSequentialImpulseConstraintSolver();
+        w->world      = new btDiscreteDynamicsWorld(
+            w->dispatcher, w->broadphase, w->solver, w->config);
+    } catch (...) {
+        // 构造中途失败：逆序释放已分配对象，避免泄漏。
+        delete w->world;
+        delete w->solver;
+        delete w->broadphase;
+        delete w->dispatcher;
+        delete w->config;
+        delete w;
+        return nullptr;
+    }
     w->world->setGravity(btVector3(gravity_x, gravity_y, gravity_z));
     w->kinematicFilter = nullptr;
     g_alloc_worlds.fetch_add(1, std::memory_order_relaxed);
@@ -136,6 +156,7 @@ BW_World* bw_world_create(float gravity_x, float gravity_y, float gravity_z) {
 
 void bw_world_destroy(BW_World* w) {
     if (!w) return;
+    BW_TRY
     delete w->kinematicFilter;
     delete w->world;
     delete w->solver;
@@ -144,50 +165,66 @@ void bw_world_destroy(BW_World* w) {
     delete w->config;
     delete w;
     g_alloc_worlds.fetch_sub(1, std::memory_order_relaxed);
+    BW_CATCH_VOID
 }
 
 void bw_world_step(BW_World* w, float dt, int max_substeps, float fixed_dt) {
     if (!w) return;
+    BW_TRY
     w->world->stepSimulation(dt, max_substeps, fixed_dt);
+    BW_CATCH_VOID
 }
 
 void bw_world_detect_collisions(BW_World* w) {
     if (!w) return;
+    BW_TRY
     // 初始化阶段只需要建立真实接触流形，不能让求解器改写刚体状态。
     w->world->performDiscreteCollisionDetection();
+    BW_CATCH_VOID
 }
 
 void bw_world_set_gravity(BW_World* w, float x, float y, float z) {
     if (!w) return;
+    BW_TRY
     w->world->setGravity(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_world_add_rigid_body(BW_World* w, BW_RigidBody* rb, int group, int mask) {
     if (!w || !rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     w->world->addRigidBody(body, (short)group, (short)mask);
+    BW_CATCH_VOID
 }
 
 void bw_world_remove_rigid_body(BW_World* w, BW_RigidBody* rb) {
     if (!w || !rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     w->world->removeRigidBody(body);
+    BW_CATCH_VOID
 }
 
 void bw_world_add_constraint(BW_World* w, BW_Constraint* c, bool disable_collision) {
     if (!w || !c) return;
+    BW_TRY
     btTypedConstraint* constraint = (btTypedConstraint*)c;
     w->world->addConstraint(constraint, disable_collision);
+    BW_CATCH_VOID
 }
 
 void bw_world_remove_constraint(BW_World* w, BW_Constraint* c) {
     if (!w || !c) return;
+    BW_TRY
     btTypedConstraint* constraint = (btTypedConstraint*)c;
     w->world->removeConstraint(constraint);
+    BW_CATCH_VOID
 }
 
 void bw_world_set_kinematic_filter(BW_World* w, bool enabled) {
     if (!w) return;
+    BW_TRY
     if (enabled) {
         if (!w->kinematicFilter) {
             w->kinematicFilter = new KinematicDynamicFilter();
@@ -198,10 +235,12 @@ void bw_world_set_kinematic_filter(BW_World* w, bool enabled) {
         delete w->kinematicFilter;
         w->kinematicFilter = nullptr;
     }
+    BW_CATCH_VOID
 }
 
 int bw_world_get_contact_manifold_count(BW_World* w) {
     if (!w || !w->dispatcher) return 0;
+    BW_TRY
     int count = 0;
     for (int i = 0; i < w->dispatcher->getNumManifolds(); ++i) {
         btPersistentManifold* manifold = w->dispatcher->getManifoldByIndexInternal(i);
@@ -215,12 +254,14 @@ int bw_world_get_contact_manifold_count(BW_World* w) {
         if (penetrating) ++count;
     }
     return count;
+    BW_CATCH_ZERO
 }
 
 int bw_world_copy_contact_manifolds(
     BW_World* w, BW_ContactManifold* output, int capacity)
 {
     if (!w || !w->dispatcher || !output || capacity <= 0) return 0;
+    BW_TRY
     int written = 0;
     for (int i = 0; i < w->dispatcher->getNumManifolds() && written < capacity; ++i) {
         btPersistentManifold* manifold = w->dispatcher->getManifoldByIndexInternal(i);
@@ -255,6 +296,7 @@ int bw_world_copy_contact_manifolds(
         output[written++] = item;
     }
     return written;
+    BW_CATCH_ZERO
 }
 
 /* ===== 碰撞形状 ===== */
@@ -285,8 +327,10 @@ BW_Shape* bw_shape_capsule(float radius, float height) {
 
 void bw_shape_destroy(BW_Shape* shape) {
     if (!shape) return;
+    BW_TRY
     delete (btCollisionShape*)shape;
     g_alloc_shapes.fetch_sub(1, std::memory_order_relaxed);
+    BW_CATCH_VOID
 }
 
 /* ===== 刚体 ===== */
@@ -313,7 +357,15 @@ BW_RigidBody* bw_rigid_body_create(const BW_RigidBodyInfo* info) {
     rbInfo.m_restitution = info->restitution;
     rbInfo.m_additionalDamping = info->additional_damping;
     
-    btRigidBody* body = new btRigidBody(rbInfo);
+    btRigidBody* body;
+    try {
+        body = new btRigidBody(rbInfo);
+    } catch (...) {
+        // new btRigidBody 抛异常时释放已分配的 MotionState 并回滚计数。
+        delete motionState;
+        g_alloc_motion_states.fetch_sub(1, std::memory_order_relaxed);
+        return nullptr;
+    }
     
     if (info->is_kinematic) {
         body->setCollisionFlags(
@@ -335,6 +387,7 @@ BW_RigidBody* bw_rigid_body_create(const BW_RigidBodyInfo* info) {
 
 void bw_rigid_body_destroy(BW_RigidBody* rb) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     if (body->getMotionState()) {
         delete body->getMotionState();
@@ -342,27 +395,33 @@ void bw_rigid_body_destroy(BW_RigidBody* rb) {
     }
     delete body;
     g_alloc_rigid_bodies.fetch_sub(1, std::memory_order_relaxed);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_get_transform(BW_RigidBody* rb, float* matrix4x4) {
     if (!rb || !matrix4x4) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     btTransform t;
     body->getMotionState()->getWorldTransform(t);
     bt_to_mat4(t, matrix4x4);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_transform(BW_RigidBody* rb, const float* matrix4x4) {
     if (!rb || !matrix4x4) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     btTransform t = mat4_to_bt(matrix4x4);
     body->setWorldTransform(t);
     body->setInterpolationWorldTransform(t);
     body->getMotionState()->setWorldTransform(t);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_kinematic_target(BW_RigidBody* rb, const float* matrix4x4) {
     if (!rb || !matrix4x4) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     btTransform t = mat4_to_bt(matrix4x4);
 
@@ -375,11 +434,20 @@ void bw_rigid_body_set_kinematic_target(BW_RigidBody* rb, const float* matrix4x4
     } else {
         body->setWorldTransform(t);
     }
+    // activate(true) 的 forceActivation 分支会覆盖激活状态，
+    // 需要恢复创建时设置的 DISABLE_DEACTIVATION，否则运动学刚体可能休眠
+    // 并被 saveKinematicState 跳过，导致目标同步与碰撞中断。
+    int previousState = body->getActivationState();
     body->activate(true);
+    if (previousState == DISABLE_DEACTIVATION) {
+        body->setActivationState(DISABLE_DEACTIVATION);
+    }
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_get_position(BW_RigidBody* rb, float* x, float* y, float* z) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     btTransform t;
     body->getMotionState()->getWorldTransform(t);
@@ -387,10 +455,12 @@ void bw_rigid_body_get_position(BW_RigidBody* rb, float* x, float* y, float* z) 
     if (x) *x = o.x();
     if (y) *y = o.y();
     if (z) *z = o.z();
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_get_rotation(BW_RigidBody* rb, float* x, float* y, float* z, float* w) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     btTransform t;
     body->getMotionState()->getWorldTransform(t);
@@ -399,110 +469,144 @@ void bw_rigid_body_get_rotation(BW_RigidBody* rb, float* x, float* y, float* z, 
     if (y) *y = q.y();
     if (z) *z = q.z();
     if (w) *w = q.w();
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_linear_velocity(BW_RigidBody* rb, float x, float y, float z) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->setLinearVelocity(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_angular_velocity(BW_RigidBody* rb, float x, float y, float z) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->setAngularVelocity(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_get_linear_velocity(BW_RigidBody* rb, float* x, float* y, float* z) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     const btVector3& v = body->getLinearVelocity();
     if (x) *x = v.x();
     if (y) *y = v.y();
     if (z) *z = v.z();
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_get_angular_velocity(BW_RigidBody* rb, float* x, float* y, float* z) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     const btVector3& v = body->getAngularVelocity();
     if (x) *x = v.x();
     if (y) *y = v.y();
     if (z) *z = v.z();
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_damping(BW_RigidBody* rb, float linear, float angular) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->setDamping(linear, angular);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_friction(BW_RigidBody* rb, float friction) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->setFriction(friction);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_restitution(BW_RigidBody* rb, float restitution) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->setRestitution(restitution);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_activation_state(BW_RigidBody* rb, int state) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->setActivationState(state);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_force_activation_state(BW_RigidBody* rb, int state) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->forceActivationState(state);
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_kinematic(BW_RigidBody* rb, bool kinematic) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     int flags = body->getCollisionFlags();
     if (kinematic) {
         flags |= btCollisionObject::CF_KINEMATIC_OBJECT;
+        body->setCollisionFlags(flags);
+        body->setActivationState(DISABLE_DEACTIVATION);
     } else {
         flags &= ~btCollisionObject::CF_KINEMATIC_OBJECT;
+        body->setCollisionFlags(flags);
+        // 转回动态刚体时恢复为普通激活，避免永不休眠。
+        body->forceActivationState(ACTIVE_TAG);
     }
-    body->setCollisionFlags(flags);
-    body->setActivationState(DISABLE_DEACTIVATION);
+    BW_CATCH_VOID
 }
 
 float bw_rigid_body_get_mass(BW_RigidBody* rb) {
     if (!rb) return 0.0f;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     float inv = body->getInvMass();
     return (inv > 0.0f) ? (1.0f / inv) : 0.0f;
+    BW_CATCH_ZERO
 }
 
 void bw_rigid_body_clear_forces(BW_RigidBody* rb) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->clearForces();
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_apply_central_force(BW_RigidBody* rb, float x, float y, float z) {
     if (!rb) return;
+    BW_TRY
     btRigidBody* body = (btRigidBody*)rb;
     body->applyCentralForce(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_rigid_body_set_ignore_collision_check(
     BW_RigidBody* rb, BW_RigidBody* other, bool ignore)
 {
     if (!rb || !other) return;
+    BW_TRY
     ((btRigidBody*)rb)->setIgnoreCollisionCheck((btRigidBody*)other, ignore);
+    BW_CATCH_VOID
 }
 
 bool bw_rigid_body_check_collide_with(BW_RigidBody* rb, BW_RigidBody* other) {
     if (!rb || !other) return false;
+    BW_TRY
     return ((btRigidBody*)rb)->checkCollideWith((btRigidBody*)other);
+    BW_CATCH_FALSE
 }
 
 /* ===== 6DOF 弹簧约束 ===== */
@@ -529,68 +633,90 @@ BW_Constraint* bw_6dof_spring_create(
 
 void bw_constraint_destroy(BW_Constraint* c) {
     if (!c) return;
+    BW_TRY
     delete (btTypedConstraint*)c;
     g_alloc_constraints.fetch_sub(1, std::memory_order_relaxed);
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_linear_lower_limit(BW_Constraint* c, float x, float y, float z) {
     if (!c) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setLinearLowerLimit(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_linear_upper_limit(BW_Constraint* c, float x, float y, float z) {
     if (!c) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setLinearUpperLimit(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_angular_lower_limit(BW_Constraint* c, float x, float y, float z) {
     if (!c) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setAngularLowerLimit(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_angular_upper_limit(BW_Constraint* c, float x, float y, float z) {
     if (!c) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setAngularUpperLimit(btVector3(x, y, z));
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_enable_spring(BW_Constraint* c, int index, bool on) {
-    if (!c) return;
+    if (!c || index < 0 || index >= 6) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->enableSpring(index, on);
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_stiffness(BW_Constraint* c, int index, float stiffness) {
-    if (!c) return;
+    if (!c || index < 0 || index >= 6) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setStiffness(index, stiffness);
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_damping(BW_Constraint* c, int index, float damping) {
-    if (!c) return;
+    if (!c || index < 0 || index >= 6) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setDamping(index, damping);
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_equilibrium_point(BW_Constraint* c) {
     if (!c) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setEquilibriumPoint();
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_set_param(BW_Constraint* c, int param, float value, int axis) {
-    if (!c) return;
+    if (!c || axis < 0 || axis >= 6) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setParam(param, value, axis);
+    BW_CATCH_VOID
 }
 
 void bw_6dof_spring_use_frame_offset(BW_Constraint* c, bool on) {
     if (!c) return;
+    BW_TRY
     btGeneric6DofSpringConstraint* con = (btGeneric6DofSpringConstraint*)c;
     con->setUseFrameOffset(on);
+    BW_CATCH_VOID
 }
 
 static float limit_violation(float value, float lower, float upper) {
@@ -604,6 +730,7 @@ bool bw_6dof_spring_get_diagnostic(
     BW_Constraint* c, BW_ConstraintDiagnostic* output)
 {
     if (!c || !output) return false;
+    BW_TRY
     auto* con = (btGeneric6DofSpringConstraint*)c;
 
     // Refresh Bullet's cached values so diagnostics work before the first step.
@@ -642,4 +769,5 @@ bool bw_6dof_spring_get_diagnostic(
     }
     output->use_frame_offset = con->getUseFrameOffset() ? 1 : 0;
     return true;
+    BW_CATCH_FALSE
 }

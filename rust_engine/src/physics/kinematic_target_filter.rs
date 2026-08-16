@@ -69,6 +69,16 @@ impl KinematicTargetFilter {
 }
 
 fn rotation_delta(previous: Mat4, current: Mat4) -> f32 {
+    // 退化矩阵（缩放/切变）会让 Quat::from_mat3 产生 NaN 四元数且 normalize 无法挽救；
+    // 直接返回无穷大表示"无法评估"，调用方按不抑制处理，避免 NaN 进入后续比较。
+    if !previous
+        .to_cols_array()
+        .iter()
+        .chain(current.to_cols_array().iter())
+        .all(|value| value.is_finite())
+    {
+        return f32::INFINITY;
+    }
     let previous_rotation = Quat::from_mat3(&Mat3::from_mat4(previous)).normalize();
     let current_rotation = Quat::from_mat3(&Mat3::from_mat4(current)).normalize();
     (2.0 * previous_rotation

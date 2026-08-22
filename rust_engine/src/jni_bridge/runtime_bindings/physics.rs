@@ -102,10 +102,12 @@ pub extern "system" fn Java_com_shiroha_mmdskin_bridge_NativeBindings_SetPhysics
     set_config(config);
 
     if rebuild_required {
-        let models = MODELS.read().unwrap();
-        for model_arc in models.values() {
-            let mut model = model_arc.lock().unwrap();
-            model.request_physics_rebuild();
+        // 26.2 架构：模型注册表在 NativeRuntime 内，取快照遍历（不持有读锁）。
+        if let Ok(models) = NATIVE_RUNTIME.models_snapshot() {
+            for model_arc in models {
+                let mut model = model_arc.lock().unwrap();
+                model.request_physics_rebuild();
+            }
         }
     }
 

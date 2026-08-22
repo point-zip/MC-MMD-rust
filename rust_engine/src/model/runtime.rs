@@ -1920,10 +1920,10 @@ impl MmdModel {
         true
     }
 
-    /// 重置物理系统
+    /// 重置物理系统（用当前骨骼姿态重新初始化）
     pub fn reset_physics(&mut self) {
         if let Some(ref mut physics) = self.physics {
-            physics.reset();
+            physics.reset(&self.physics_bone_transforms_buf);
         }
     }
 
@@ -1985,16 +1985,15 @@ impl MmdModel {
         // 拆分借用：先取出 physics 避免同时借用 self
         let mut physics = self.physics.take().unwrap();
 
-        // 1. 同步运动学刚体
+        // 1. 同步运动学刚体（新版内部自取全局配置）
         physics.sync_bodies_with_model_velocity(
             &self.physics_bone_transforms_buf,
             delta_time,
             model_transform,
-            &config,
         );
 
-        // 2. Bullet3 步进（传入 config 避免内部重复 get_config）
-        physics.step_simulation(delta_time, &config);
+        // 2. Bullet3 步进
+        physics.step_simulation(delta_time);
 
         // 3. 同步物理结果回骨骼（复用内部缓冲区）
         let dynamic_bone_transforms =

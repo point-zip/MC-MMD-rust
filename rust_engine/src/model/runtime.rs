@@ -137,6 +137,8 @@ pub struct MmdModel {
     // 物理系统
     physics: Option<MMDPhysics>,
     physics_enabled: bool,
+    /// 配置变更后请求重建物理世界（下一次 update_physics 时消费）
+    physics_rebuild_pending: bool,
     /// 骨骼变换缓冲区（避免每帧堆分配）
     physics_bone_transforms_buf: Vec<Mat4>,
 
@@ -254,6 +256,7 @@ impl MmdModel {
             model_transform: Mat4::IDENTITY,
             physics: None,
             physics_enabled: false,
+            physics_rebuild_pending: false,
             physics_bone_transforms_buf: Vec::new(),
             material_visible: Vec::new(),
             user_material_visible: Vec::new(),
@@ -1913,6 +1916,7 @@ impl MmdModel {
 
         self.physics = Some(physics);
         self.physics_enabled = true;
+        self.physics_rebuild_pending = false;
         true
     }
 
@@ -1926,6 +1930,13 @@ impl MmdModel {
     /// 启用/禁用物理
     pub fn set_physics_enabled(&mut self, enabled: bool) {
         self.physics_enabled = enabled;
+    }
+
+    /// 请求在下一次更新时按最新全局配置重建物理世界。
+    pub fn request_physics_rebuild(&mut self) {
+        if self.physics.is_some() {
+            self.physics_rebuild_pending = true;
+        }
     }
 
     /// 获取物理是否启用
@@ -1948,6 +1959,17 @@ impl MmdModel {
         // 全局开关 + per-model 开关双重检查
         if !config.enabled || !self.physics_enabled || self.physics.is_none() {
             return;
+        }
+
+        // 配置变更触发的重建：丢弃旧世界并按最新配置重建。
+        // 重建失败时必须清除 pending 标志，否则会在 physics.is_none()
+        // 处提前返回，标志永不消费，物理被永久关闭直到手动翻转开关。
+        if self.physics_rebuild_pending {
+            self.physics = None;
+            if !self.init_physics() {
+                self.physics_rebuild_pending = false;
+                return;
+            }
         }
 
         // 收集骨骼变换（复用缓冲区，resize + 索引赋值避免 push 分支开销）

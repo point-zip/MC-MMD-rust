@@ -3,6 +3,8 @@ package com.shiroha.mmdskin.client.frame;
 
 import com.shiroha.mmdskin.client.animation.ModelAnimationController;
 import com.shiroha.mmdskin.client.model.MmdModelInstance;
+import com.shiroha.mmdskin.compat.melodies.MelodiesCompat;
+import com.shiroha.mmdskin.compat.melodies.MmdArmPoseMapper;
 import com.shiroha.mmdskin.config.ConfigManager;
 import com.shiroha.mmdskin.client.gpu.MmdRenderPipelines;
 
@@ -24,6 +26,13 @@ public final class MmdModelFramePreparation implements FrameUpdatePreparation {
         }
         model.setGpuSkinningEnabled(ConfigManager.isGpuSkinningEnabled() && MmdRenderPipelines.isGpuReady());
         animations.apply(model, snapshot.animationIntent());
+        // 乐器演奏姿势覆盖（在 native UpdateModel 之前设置，vpd 管线动画后/物理前应用）
+        var instrumentPose = snapshot.instrumentPose();
+        if (instrumentPose != null) {
+            MmdArmPoseMapper.apply(model.nativeHandle(), instrumentPose);
+        } else if (MelodiesCompat.isLoaded()) {
+            MmdArmPoseMapper.clear(model.nativeHandle());
+        }
         MmdModelMotion motion = snapshot.motion();
         if (motion.synchronizeNative()) {
             model.setModelPositionAndYaw(

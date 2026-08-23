@@ -49,7 +49,8 @@ public final class SceneRenderContributor {
                 false,
                 packedLight,
                 distanceSquared,
-                MmdRenderSnapshot.Context.SCENE);
+                MmdRenderSnapshot.Context.SCENE,
+                null);
         frameUpdater.updateOnce(frameId, model, snapshot, deltaSeconds);
         queue.enqueue(new MmdDrawRequest(model, snapshot, PipelineVariant.OPAQUE, false));
     }

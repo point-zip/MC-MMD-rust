@@ -8,6 +8,7 @@ import com.shiroha.mmdskin.bridge.runtime.NativeModelPort;
 import com.shiroha.mmdskin.bridge.runtime.NativeModelQueryPort;
 import com.shiroha.mmdskin.bridge.runtime.NativeMorphPort;
 import com.shiroha.mmdskin.bridge.runtime.NativePhysicsPort;
+import com.shiroha.mmdskin.bridge.runtime.NativePoseOverridePort;
 import com.shiroha.mmdskin.bridge.runtime.NativeStagePort;
 import com.shiroha.mmdskin.bridge.runtime.NativeVrPort;
 
@@ -55,9 +56,13 @@ public final class NativePortAdapters {
         return ADAPTER;
     }
 
+    public static NativePoseOverridePort poseOverride() {
+        return ADAPTER;
+    }
+
     private static final class Adapter implements NativeModelLoadPort, NativeModelPort, NativeModelMatrixPort,
             NativeModelQueryPort, NativeAnimationPort, NativeMorphPort, NativeStagePort,
-            NativePhysicsPort, NativeVrPort {
+            NativePhysicsPort, NativeVrPort, NativePoseOverridePort {
         @Override
         public long loadModel(String modelFile, String modelDirectory, Format format,
                               int animationLayers) {
@@ -320,6 +325,19 @@ public final class NativePortAdapters {
         @Override
         public void setIkParams(long modelHandle, float armIkStrength) {
             NativeBindings.SetVRIKParams(modelHandle, armIkStrength);
+        }
+
+        @Override
+        public boolean setBoneOverride(long modelHandle, String boneName,
+                                       float tx, float ty, float tz,
+                                       float qx, float qy, float qz, float qw) {
+            return NativeBindings.SetBoneOverrideByName(modelHandle, boneName,
+                    tx, ty, tz, qx, qy, qz, qw);
+        }
+
+        @Override
+        public void clearBoneOverrides(long modelHandle) {
+            NativeBindings.ClearBoneOverrides(modelHandle);
         }
 
         private static void requireSuccess(String operation, int status) {

@@ -49,7 +49,8 @@ public final class LegacyEntityMmdRenderer<T extends Entity>
                 false,
                 0,
                 Math.max(0.0D, state.distanceToCameraSq),
-                MmdRenderSnapshot.Context.WORLD);
+                MmdRenderSnapshot.Context.WORLD,
+                null);
     }
 
     @Override

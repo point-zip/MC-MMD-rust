@@ -3,6 +3,7 @@ package com.shiroha.mmdskin.client.frame;
 
 import com.shiroha.mmdskin.client.animation.MmdAnimationIntent;
 import com.shiroha.mmdskin.client.model.ModelKey;
+import com.shiroha.mmdskin.compat.melodies.MelodiesPose;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -18,7 +19,8 @@ public record MmdRenderSnapshot(
         boolean glowing,
         int packedLight,
         double cameraDistanceSquared,
-        Context context) {
+        Context context,
+        MelodiesPose instrumentPose) {
 
     public MmdRenderSnapshot {
         entityId = Objects.requireNonNull(entityId, "entityId");
@@ -40,17 +42,17 @@ public record MmdRenderSnapshot(
 
     public MmdRenderSnapshot withRenderTransform(ModelTransform renderTransform, int renderLight) {
         return new MmdRenderSnapshot(entityId, modelKey, pose, animationIntent, motion, renderTransform, visibility,
-                glowing, renderLight, cameraDistanceSquared, context);
+                glowing, renderLight, cameraDistanceSquared, context, instrumentPose);
     }
 
     public MmdRenderSnapshot withContext(Context renderContext) {
         return new MmdRenderSnapshot(entityId, modelKey, pose, animationIntent, motion, transform, visibility,
-                glowing, packedLight, cameraDistanceSquared, renderContext);
+                glowing, packedLight, cameraDistanceSquared, renderContext, instrumentPose);
     }
 
     public MmdRenderSnapshot withAnimationIntent(MmdAnimationIntent intent) {
         return new MmdRenderSnapshot(entityId, modelKey, pose, intent, motion, transform, visibility,
-                glowing, packedLight, cameraDistanceSquared, context);
+                glowing, packedLight, cameraDistanceSquared, context, instrumentPose);
     }
 
     public enum Visibility {

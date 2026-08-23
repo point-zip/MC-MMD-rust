@@ -22,6 +22,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ==================== ImmersiveMelodies 编译依赖（compileOnly 软依赖） ====================
+  # 从 point-zip fork 的 26.2-fabric 分支源码构建，产物仅供编译，不打进模组 jar。
+  build-melodies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ImmersiveMelodies fork
+        uses: actions/checkout@v4
+        with:
+          repository: point-zip/ImmersiveMelodies
+          ref: 26.2-fabric
+          path: immersive-melodies
+
+      - name: Setup JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build IM fabric jar
+        run: |
+          cd immersive-melodies
+          chmod +x gradlew
+          ./gradlew :fabric:build -x test --no-daemon
+
+      - name: Upload IM jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: melodies-jar
+          path: |
+            immersive-melodies/fabric/build/libs/*.jar
+            !immersive-melodies/fabric/build/libs/*-sources.jar
+            !immersive-melodies/fabric/build/libs/*-javadoc.jar
+          if-no-files-found: error
+
   # ==================== Rust 原生库构建（每个平台一个 artifact） ====================
   build-rust:
     strategy:
@@ -86,7 +123,7 @@ jobs:
 
   # ==================== 单平台完整 mod jar（自带本平台原生库） ====================
   build-mod:
-    needs: build-rust
+    needs: [build-rust, build-melodies]
     strategy:
       fail-fast: false
       matrix:
@@ -153,7 +190,7 @@ jobs:
 
   # ==================== Universal jar（收集所有平台原生库 → 单一全平台 jar） ====================
   build-universal:
-    needs: build-rust
+    needs: [build-rust, build-melodies]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -183,6 +220,12 @@ jobs:
         with:
           pattern: native-*
           path: native-libs
+
+      - name: Download ImmersiveMelodies jar (compileOnly)
+        uses: actions/download-artifact@v4
+        with:
+          name: melodies-jar
+          path: libs
 
       - name: Copy natives into resources
         shell: bash

@@ -91,3 +91,16 @@ https://github.com/ReaNAiveD/mdanceio
 
 PMX/VMD/VPD 格式由樋口優 (Higuchi Yu) 创作
 MikuMikuDance: https://sites.google.com/view/vpvp/
+
+
+================================================================================
+ImmersiveMelodies 互操作说明
+================================================================================
+
+本模组包含与 Immersive Melodies（https://github.com/Luke100000/ImmersiveMelodies，
+GPL-3.0）的可选运行时互操作：
+
+- 仅在编译期引用其类（compileOnly），CI 从 point-zip/ImmersiveMelodies@26.2-fabric
+  源码构建依赖 jar；本模组分发的 jar 不包含任何 ImmersiveMelodies 代码或资源。
+- 运行时通过类探测启用；未安装 Immersive Melodies 时本功能完全不生效。
+- 乐器演奏姿势的角度计算由用户安装的 Immersive Melodies 在运行时执行。

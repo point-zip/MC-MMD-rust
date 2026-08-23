@@ -88,6 +88,12 @@ final class NativeBindings {
 
     static native void ResetAllMorphs(long modelHandle);
 
+    static native boolean SetBoneOverrideByName(long modelHandle, String boneName,
+                                                float tx, float ty, float tz,
+                                                float qx, float qy, float qz, float qw);
+
+    static native void ClearBoneOverrides(long modelHandle);
+
     static native long GetMorphCount(long modelHandle);
 
     static native String GetMorphName(long modelHandle, int morphIndex);

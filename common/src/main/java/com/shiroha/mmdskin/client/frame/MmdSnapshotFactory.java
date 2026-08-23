@@ -4,6 +4,7 @@ package com.shiroha.mmdskin.client.frame;
 import com.shiroha.mmdskin.client.animation.MmdAnimationIntent;
 import com.shiroha.mmdskin.client.entity.EntityModelSelection;
 import com.shiroha.mmdskin.client.model.ModelKey;
+import com.shiroha.mmdskin.compat.melodies.MelodiesCompat;
 import com.shiroha.mmdskin.player.animation.PlayerAnimationIntentExtractor;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
@@ -57,7 +58,8 @@ public final class MmdSnapshotFactory {
                 state.appearsGlowing(),
                 0,
                 Math.max(0.0D, state.distanceToCameraSq),
-                context);
+                context,
+                MelodiesCompat.capturePose(entity));
     }
 
     static ModelKey.Usage usageFor(MmdRenderSnapshot.Context context) {

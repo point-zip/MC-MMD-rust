@@ -23,5 +23,6 @@ include!("runtime_bindings/animation_layers.rs");
 include!("runtime_bindings/physics.rs");
 include!("runtime_bindings/material.rs");
 include!("runtime_bindings/morph.rs");
+include!("runtime_bindings/bone_override.rs");
 include!("runtime_bindings/first_person.rs");
 include!("runtime_bindings/vr.rs");

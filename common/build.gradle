@@ -7,6 +7,9 @@ dependencies {
     // 26.x 无反混淆，使用标准 Gradle 配置；本模块未使用 Architectury API，不引入
     compileOnly("net.fabricmc:fabric-loader:${project.loader_version}")
     compileOnly("javazoom:jlayer:1.0.1") { transitive = false }
+    // ImmersiveMelodies 联动（compileOnly 软依赖）：jar 由 CI 从 point-zip/ImmersiveMelodies@26.2-fabric
+    // 源码构建后放入 libs/，不随模组分发；运行时由用户安装的 IM 提供类。
+    compileOnly(fileTree(rootProject.file('libs')) { include 'immersive_melodies*.jar' })
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

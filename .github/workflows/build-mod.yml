@@ -12,6 +12,7 @@ name: Build & Release (26.2)
 
 on:
   push:
+    branches: ['feature/**']
     tags:
       - 'v*'
   pull_request:

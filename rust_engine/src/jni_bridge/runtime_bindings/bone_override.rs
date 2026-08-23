@@ -7,7 +7,7 @@
 // translation/rotation 为该骨骼局部空间增量（rotation 为 xyzw 四元数）。
 #[no_mangle]
 pub extern "system" fn Java_com_shiroha_mmdskin_bridge_NativeBindings_SetBoneOverrideByName(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     model: jlong,
     bone_name: JString,

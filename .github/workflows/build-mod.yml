@@ -178,6 +178,16 @@ jobs:
           test -n "$(find rust_engine/target/release -type f -name '${{ matrix.native }}')" \
             && echo "native library ready for gradle"
 
+      - name: Download ImmersiveMelodies jar (compileOnly)
+        uses: actions/download-artifact@v4
+        with:
+          name: melodies-jar
+          path: libs
+
+      - name: Verify ImmersiveMelodies jar present
+        shell: bash
+        run: ls -la libs/
+
       - name: Build mod with Gradle (${{ matrix.framework }})
         shell: bash
         run: ./gradlew :${{ matrix.framework }}:build --no-daemon -x test

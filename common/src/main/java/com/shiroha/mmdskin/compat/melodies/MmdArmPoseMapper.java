@@ -18,7 +18,9 @@ import org.joml.Vector3f;
  */
 public final class MmdArmPoseMapper {
     private static final boolean DEBUG = Boolean.getBoolean("mmdskin.melodies.debug");
-    private static final int SIGNS = Integer.getInteger("mmdskin.melodies.signs", 0b0011);
+    // 默认 0b1001：X 镜像（vanilla 与 MMD 模型左右镜像）+ 头 pitch 反号（vanilla 低头为正）。
+    // 校准：-Dmmdskin.melodies.signs=<0-15>（bit0 flipX, bit1 flipZ, bit2 headPitch, bit3 headYaw）
+    private static final int SIGNS = Integer.getInteger("mmdskin.melodies.signs", 0b1001);
 
     private static final Vector3f LEFT_ARM_REST = new Vector3f(1.0F, 0.0F, 0.0F);
     private static final Vector3f RIGHT_ARM_REST = new Vector3f(-1.0F, 0.0F, 0.0F);

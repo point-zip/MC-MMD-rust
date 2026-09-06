@@ -3,7 +3,6 @@ package com.shiroha.mmdskin.client.frame;
 
 import com.shiroha.mmdskin.client.animation.ModelAnimationController;
 import com.shiroha.mmdskin.client.model.MmdModelInstance;
-import com.shiroha.mmdskin.compat.melodies.MelodiesCompat;
 import com.shiroha.mmdskin.compat.melodies.MmdArmPoseMapper;
 import com.shiroha.mmdskin.config.ConfigManager;
 import com.shiroha.mmdskin.client.gpu.MmdRenderPipelines;
@@ -30,7 +29,8 @@ public final class MmdModelFramePreparation implements FrameUpdatePreparation {
         var instrumentPose = snapshot.instrumentPose();
         if (instrumentPose != null) {
             MmdArmPoseMapper.apply(model.nativeHandle(), instrumentPose);
-        } else if (MelodiesCompat.isLoaded()) {
+        } else {
+            // 无条件清除：防止物品切换/停止演奏后最后一帧覆盖永久残留
             MmdArmPoseMapper.clear(model.nativeHandle());
         }
         MmdModelMotion motion = snapshot.motion();

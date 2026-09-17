@@ -95,6 +95,9 @@ final class NativeBindings {
 
     static native void ClearBoneOverrides(long modelHandle);
 
+    static native boolean GetBoneRestDirection(long modelHandle, String fromBone, String toBone,
+                                                float[] output);
+
     static native long GetMorphCount(long modelHandle);
 
     static native String GetMorphName(long modelHandle, int morphIndex);

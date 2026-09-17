@@ -5,7 +5,8 @@ package com.shiroha.mmdskin.compat.melodies;
  * 一次乐器演奏姿势采样。所有角度为 vanilla ModelPart 约定的弧度值
  * （head/leftArm/rightArm 部件的 xRot/yRot/zRot），
  * 由 ImmersiveMelodies 的乐器 Animator 按当前音符状态实时计算。
- * 仅在实体手持乐器时非空。
+ * 仅在实体真正处于演奏态（手持乐器的 PLAYING 标记为真）时非空，
+ * 单纯手持乐器不会触发。
  */
 public record MelodiesPose(
         float headPitch,

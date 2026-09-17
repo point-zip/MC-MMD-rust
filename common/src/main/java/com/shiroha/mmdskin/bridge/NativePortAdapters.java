@@ -11,6 +11,7 @@ import com.shiroha.mmdskin.bridge.runtime.NativePhysicsPort;
 import com.shiroha.mmdskin.bridge.runtime.NativePoseOverridePort;
 import com.shiroha.mmdskin.bridge.runtime.NativeStagePort;
 import com.shiroha.mmdskin.bridge.runtime.NativeVrPort;
+import org.joml.Vector3f;
 
 import java.nio.ByteBuffer;
 
@@ -63,6 +64,9 @@ public final class NativePortAdapters {
     private static final class Adapter implements NativeModelLoadPort, NativeModelPort, NativeModelMatrixPort,
             NativeModelQueryPort, NativeAnimationPort, NativeMorphPort, NativeStagePort,
             NativePhysicsPort, NativeVrPort, NativePoseOverridePort {
+        /** 静息方向查询的 JNI 出参暂存（渲染线程单线程使用）。 */
+        private final float[] restDirectionScratch = new float[3];
+
         @Override
         public long loadModel(String modelFile, String modelDirectory, Format format,
                               int animationLayers) {
@@ -339,6 +343,15 @@ public final class NativePortAdapters {
         @Override
         public void clearBoneOverrides(long modelHandle) {
             NativeBindings.ClearBoneOverrides(modelHandle);
+        }
+
+        @Override
+        public Vector3f boneRestDirection(long modelHandle, String fromBone, String toBone) {
+            // 复用单个暂存数组：查询频率为每帧每臂一次，无并发需求
+            if (!NativeBindings.GetBoneRestDirection(modelHandle, fromBone, toBone, restDirectionScratch)) {
+                return null;
+            }
+            return new Vector3f(restDirectionScratch[0], restDirectionScratch[1], restDirectionScratch[2]);
         }
 
         private static void requireSuccess(String operation, int status) {

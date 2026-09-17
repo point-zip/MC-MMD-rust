@@ -500,6 +500,22 @@ impl BoneSet {
         }
     }
 
+    /// 禁用"会改写指定骨骼"的所有 IK 解算器
+    ///
+    /// 用于程序化姿势覆盖（乐器演奏等）：覆盖写入 animation_rotate 后，若存在以该骨骼
+    /// 为 IK 链成员的解算器（如腕IK/手首IK），求解会把手臂重新拉回目标点，令覆盖失效。
+    /// 启用状态每帧由 `reset_all_ik_enabled` 复位，因此无需在覆盖结束时恢复。
+    pub fn disable_ik_controlling_bone(&mut self, bone_index: usize) {
+        for solver in &mut self.ik_solvers {
+            if !solver.enabled {
+                continue;
+            }
+            if solver.config.links.iter().any(|link| link.bone_index as usize == bone_index) {
+                solver.enabled = false;
+            }
+        }
+    }
+
     /// 设置 IK 启用状态（按索引）
     pub fn set_ik_enabled(&mut self, solver_index: usize, enabled: bool) {
         if let Some(solver) = self.ik_solvers.get_mut(solver_index) {

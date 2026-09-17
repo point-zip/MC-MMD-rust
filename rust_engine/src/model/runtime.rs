@@ -152,6 +152,9 @@ pub struct MmdModel {
     // VPD 骨骼姿势覆盖（骨骼索引 -> (位移, 旋转)）
     vpd_bone_overrides: HashMap<usize, (Vec3, Quat)>,
 
+    // 乐器演奏姿势覆盖（独立通道，与 VPD 互不干扰：VPD 先应用，乐器覆盖在其后生效）
+    instrument_bone_overrides: HashMap<usize, (Vec3, Quat)>,
+
     // ======== 第一人称模式 ========
     /// 第一人称模式是否启用
     first_person_enabled: bool,
@@ -262,6 +265,7 @@ impl MmdModel {
             user_material_visible: Vec::new(),
             material_morph_results_flat_cache: Vec::new(),
             vpd_bone_overrides: HashMap::new(),
+            instrument_bone_overrides: HashMap::new(),
             vr_hand_mode: 0,
             hand_submesh_flags: Vec::new(),
             hand_detection_initialized: false,
@@ -1805,13 +1809,59 @@ impl MmdModel {
         self.vpd_bone_overrides.clear();
     }
 
-    /// 应用 VPD 骨骼姿势覆盖到 BoneManager
+    /// 设置乐器演奏骨骼姿势覆盖
+    ///
+    /// 独立于 VPD 通道：两者可共存，应用顺序为 VPD → 乐器覆盖，
+    /// 因此演奏中的手臂/头部由乐器姿势决定，其余骨骼仍按 VPD/动画表现。
+    pub fn set_instrument_bone_override(
+        &mut self,
+        bone_index: usize,
+        translation: Vec3,
+        rotation: Quat,
+    ) {
+        self.instrument_bone_overrides
+            .insert(bone_index, (translation, rotation));
+    }
+
+    /// 清除所有乐器演奏骨骼姿势覆盖（停止演奏/切换物品时调用）
+    pub fn clear_instrument_bone_overrides(&mut self) {
+        self.instrument_bone_overrides.clear();
+    }
+
+    /// 应用骨骼姿势覆盖到 BoneManager
+    ///
+    /// 顺序：VPD 通道 → 乐器通道。覆盖写入 `animation_rotate`（在动画评估之后），
+    /// 因此会压过 VMD 动画；同时禁用控制这些骨骼的 IK 解算器，避免 IK 反向争夺
+    /// 覆盖结果（IK 启用状态每帧由 `reset_all_ik_enabled` 复位，无需手动恢复）。
     fn apply_vpd_bone_overrides(&mut self) {
         for (&bone_index, &(translation, rotation)) in &self.vpd_bone_overrides {
             let t = self.bone_manager.convert_vmd_translation(translation);
             let r = self.bone_manager.convert_vmd_rotation(rotation);
             self.bone_manager.set_bone_translation(bone_index, t);
             self.bone_manager.set_bone_rotation(bone_index, r);
+        }
+        for (&bone_index, &(translation, rotation)) in &self.instrument_bone_overrides {
+            let t = self.bone_manager.convert_vmd_translation(translation);
+            let r = self.bone_manager.convert_vmd_rotation(rotation);
+            self.bone_manager.set_bone_translation(bone_index, t);
+            self.bone_manager.set_bone_rotation(bone_index, r);
+            self.bone_manager.disable_ik_controlling_bone(bone_index);
+        }
+    }
+
+    /// 查询两骨骼静息位置之间的方向（模型空间单位向量），用于程序化姿势映射。
+    /// 返回 None 表示骨骼名未找到或两骨骼重合。
+    pub fn bone_rest_direction(&self, from_name: &str, to_name: &str) -> Option<Vec3> {
+        let from = self.bone_manager.find_bone_by_name(from_name)?;
+        let to = self.bone_manager.find_bone_by_name(to_name)?;
+        let from_pos = self.bone_manager.get_bone(from)?.initial_position;
+        let to_pos = self.bone_manager.get_bone(to)?.initial_position;
+        let delta = to_pos - from_pos;
+        let length = delta.length();
+        if length > 1.0e-6 {
+            Some(delta / length)
+        } else {
+            None
         }
     }
 
@@ -2367,6 +2417,10 @@ impl MmdModel {
 
         // VPD 骨骼覆盖
         total += (self.vpd_bone_overrides.capacity()
+            * (size_of::<usize>() + size_of::<(Vec3, Quat)>())) as u64;
+
+        // 乐器演奏骨骼覆盖
+        total += (self.instrument_bone_overrides.capacity()
             * (size_of::<usize>() + size_of::<(Vec3, Quat)>())) as u64;
 
         total

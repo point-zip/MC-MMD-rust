@@ -3,6 +3,7 @@ package com.shiroha.mmdskin.client.frame;
 
 import com.shiroha.mmdskin.client.animation.ModelAnimationController;
 import com.shiroha.mmdskin.client.model.MmdModelInstance;
+import com.shiroha.mmdskin.compat.melodies.MelodiesCompat;
 import com.shiroha.mmdskin.compat.melodies.MmdArmPoseMapper;
 import com.shiroha.mmdskin.config.ConfigManager;
 import com.shiroha.mmdskin.client.gpu.MmdRenderPipelines;
@@ -29,8 +30,9 @@ public final class MmdModelFramePreparation implements FrameUpdatePreparation {
         var instrumentPose = snapshot.instrumentPose();
         if (instrumentPose != null) {
             MmdArmPoseMapper.apply(model.nativeHandle(), instrumentPose);
-        } else {
-            // 无条件清除：防止物品切换/停止演奏后最后一帧覆盖永久残留
+        } else if (MelodiesCompat.isLoaded()) {
+            // 停止演奏/切换物品后清除残留覆盖。乐器通道与 VPD 表情通道相互独立，
+            // 因此这里不会影响表情轮盘的 VPD 姿势；未安装 IM 时不可能有残留，省去 JNI 调用。
             MmdArmPoseMapper.clear(model.nativeHandle());
         }
         MmdModelMotion motion = snapshot.motion();

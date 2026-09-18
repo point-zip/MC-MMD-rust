@@ -117,6 +117,7 @@ public final class MmdArmPoseMapper {
             System.out.printf("[MMD melodies] arm %s rest=(%.3f,%.3f,%.3f) -> target=(%.3f,%.3f,%.3f)%n",
                     boneNames[0], rest.x, rest.y, rest.z, target.x, target.y, target.z);
         }
+        return applied;
     }
 
     /** 与 ModelPart.translateAndRotate 相同的组合次序：Rz(z)·Ry(y)·Rx(x)。 */

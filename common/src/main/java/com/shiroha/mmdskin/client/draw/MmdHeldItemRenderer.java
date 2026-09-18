@@ -37,9 +37,13 @@ public final class MmdHeldItemRenderer {
             poseStack.last().normal().rotateY(yawRadians);
             float renderScale = model.renderScale();
             poseStack.scale(renderScale, renderScale, renderScale);
-            renderHand(model, entity, entity.getMainHandItem(), ItemDisplayContext.FIRST_PERSON_RIGHT_HAND,
+            // 显示上下文必须是第三人称：物品挂在世界空间的手骨上，原版 LivingEntityRenderer
+            // 也是这样构建手持物的（ArmedEntityRenderState 用 THIRD_PERSON_*，1.21.5 版本同）。
+            // 用 FIRST_PERSON_* 会让按 display_context 选模型的物品（如沉浸音乐乐器：
+            // 手持类上下文取 *_hand 立体模型）拿到面向第一人称视角的变换而错位。
+            renderHand(model, entity, entity.getMainHandItem(), ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,
                     NativeModelMatrixPort.Hand.RIGHT, poseStack, collector, packedLight);
-            renderHand(model, entity, entity.getOffhandItem(), ItemDisplayContext.FIRST_PERSON_LEFT_HAND,
+            renderHand(model, entity, entity.getOffhandItem(), ItemDisplayContext.THIRD_PERSON_LEFT_HAND,
                     NativeModelMatrixPort.Hand.LEFT, poseStack, collector, packedLight);
         } finally {
             poseStack.popPose();

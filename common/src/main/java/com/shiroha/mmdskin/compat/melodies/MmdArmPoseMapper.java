@@ -40,9 +40,29 @@ public final class MmdArmPoseMapper {
     private static final String[] LEFT_ARM_REST_TARGETS = {"左ひじ", "左手首", "elbow_L", "LeftElbow"};
     private static final String[] RIGHT_ARM_REST_TARGETS = {"右ひじ", "右手首", "elbow_R", "RightElbow"};
 
+    // 手臂内段关节（肘/腕捩/手捩/手首）：
+    // vanilla 人形的手臂是单段刚体（HumanoidModel 的 leftArm/rightArm 一个部件直接挂到手上），
+    // 乐器 Animator 的角度也只描述"整条手臂指向哪里"。MMD 手臂则由 腕→腕捩→ひじ→手捩→手首
+    // 多段构成，若不把这些内段关节一并归零，VMD 自带的肘部弯曲会在这个新朝向下把前臂折向
+    // 胸口（实测 idle 动画的 ひじ 有约 25° 弯曲）。归零后手臂与 vanilla 一样是直的，
+    // 才能忠实还原 Animator 的目标姿势。
+    private static final String[] LEFT_INNER_ARM_BONES = {
+            "左腕捩", "左ひじ", "左手捩", "左手首",
+            "leftLowerArm", "LeftLowerArm", "leftHand", "LeftHand"};
+    private static final String[] RIGHT_INNER_ARM_BONES = {
+            "右腕捩", "右ひじ", "右手捩", "右手首",
+            "rightLowerArm", "RightLowerArm", "rightHand", "RightHand"};
+    /** 颈部：vanilla 头部同样是单关节（head 直接挂到 body），MMD 的首/頭 两段需合一。 */
+    private static final String[] NECK_BONES = {"首", "neck", "Neck"};
+
     private static volatile long debugLoggedHandle = Long.MIN_VALUE;
+    private static volatile String lastReport = "未触发";
 
     private MmdArmPoseMapper() {
+    }
+
+    public static String lastReport() {
+        return lastReport;
     }
 
     public static void apply(long modelHandle, MelodiesPose pose) {
@@ -52,33 +72,46 @@ public final class MmdArmPoseMapper {
         }
 
         // 头：MMD 頭的静息面朝向在引擎空间即 +Z（与 vanilla 面部同向），无需静息补正。
-        setFirstBone(modelHandle, HEAD_BONES,
+        boolean head = setFirstBone(modelHandle, HEAD_BONES,
                 toEngineSpace(vanillaRotation(pose.headPitch(), pose.headYaw(), 0.0F)));
+        setFirstBone(modelHandle, NECK_BONES, new Quaternionf());
 
-        applyArm(modelHandle, LEFT_UPPER_ARM_BONES, LEFT_ARM_REST_TARGETS, FALLBACK_LEFT_ARM_REST,
+        boolean left = applyArm(modelHandle, LEFT_UPPER_ARM_BONES, LEFT_ARM_REST_TARGETS,
+                FALLBACK_LEFT_ARM_REST, LEFT_INNER_ARM_BONES,
                 pose.leftArmPitch(), pose.leftArmYaw(), pose.leftArmRoll());
-        applyArm(modelHandle, RIGHT_UPPER_ARM_BONES, RIGHT_ARM_REST_TARGETS, FALLBACK_RIGHT_ARM_REST,
+        boolean right = applyArm(modelHandle, RIGHT_UPPER_ARM_BONES, RIGHT_ARM_REST_TARGETS,
+                FALLBACK_RIGHT_ARM_REST, RIGHT_INNER_ARM_BONES,
                 pose.rightArmPitch(), pose.rightArmYaw(), pose.rightArmRoll());
 
+        lastReport = "頭" + mark(head) + " 左" + mark(left) + " 右" + mark(right);
         if (DEBUG) {
             logOnce(modelHandle, pose);
         }
     }
 
     public static void clear(long modelHandle) {
+        lastReport = "未演奏";
         NativePortAdapters.poseOverride().clearBoneOverrides(modelHandle);
     }
 
-    private static void applyArm(long modelHandle, String[] boneNames, String[] restTargets,
-                                 Vector3f fallbackRest,
-                                 float pitch, float yaw, float roll) {
+    private static String mark(boolean applied) {
+        return applied ? "✓" : "✗";
+    }
+
+    private static boolean applyArm(long modelHandle, String[] boneNames, String[] restTargets,
+                                    Vector3f fallbackRest, String[] innerBones,
+                                    float pitch, float yaw, float roll) {
         Vector3f rest = queryRestDirection(modelHandle, boneNames, restTargets);
         if (!isUsable(rest)) {
             rest = fallbackRest;
         }
         Quaternionf restFix = new Quaternionf().rotationTo(rest, ARM_REST_ENGINE);
         Quaternionf rotation = toEngineSpace(vanillaRotation(pitch, yaw, roll)).mul(restFix);
-        setFirstBone(modelHandle, boneNames, rotation);
+        boolean applied = setFirstBone(modelHandle, boneNames, rotation);
+        // 内段关节归零：让 MMD 手臂与 vanilla 一样保持单段伸直
+        for (String innerBone : innerBones) {
+            setFirstBone(modelHandle, new String[]{innerBone}, new Quaternionf());
+        }
         if (DEBUG) {
             Vector3f target = rotation.transform(new Vector3f(rest));
             System.out.printf("[MMD melodies] arm %s rest=(%.3f,%.3f,%.3f) -> target=(%.3f,%.3f,%.3f)%n",

@@ -12,7 +12,14 @@ public final class MelodiesCompat {
     private static volatile Boolean loaded;
     private static volatile boolean hookFailureLogged;
 
+    /** 最近一次采样的可读状态，供调试 HUD 显示（判断联动是否真的生效）。 */
+    private static volatile String lastState = "未采样";
+
     private MelodiesCompat() {
+    }
+
+    public static String lastState() {
+        return lastState;
     }
 
     public static boolean isLoaded() {
@@ -25,6 +32,7 @@ public final class MelodiesCompat {
                 value = false;
             }
             loaded = value;
+            lastState = value ? "已加载，未演奏" : "未安装 IM";
         }
         return value;
     }
@@ -38,7 +46,9 @@ public final class MelodiesCompat {
             return null;
         }
         try {
-            return MelodiesHooks.capture(entity);
+            MelodiesPose pose = MelodiesHooks.capture(entity);
+            lastState = pose == null ? "持乐器未演奏" : "演奏中";
+            return pose;
         } catch (Throwable failure) {
             // IM 版本不匹配等场景：记录一次后永久回退，避免每帧刷日志
             if (!hookFailureLogged) {
@@ -46,6 +56,7 @@ public final class MelodiesCompat {
                 LOGGER.warn("ImmersiveMelodies 姿势采样失败，联动已停用: {}", failure.toString());
             }
             loaded = false;
+            lastState = "采样失败，已停用";
             return null;
         }
     }

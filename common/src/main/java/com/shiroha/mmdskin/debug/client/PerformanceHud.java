@@ -1,13 +1,13 @@
 // 负责把 Render Metrics 与只读显存样本绘制为客户端调试 HUD。
 package com.shiroha.mmdskin.debug.client;
 
+import com.shiroha.mmdskin.bridge.NativePortAdapters;
 import com.shiroha.mmdskin.bridge.graphics.OpenGlMemoryProbe;
 import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
 import com.shiroha.mmdskin.client.metrics.RenderMetrics;
-import com.shiroha.mmdskin.bridge.NativePortAdapters;
-import com.shiroha.mmdskin.client.MmdClientRenderRuntime;
-import com.shiroha.mmdskin.client.metrics.RenderMetrics;
 import com.shiroha.mmdskin.client.model.MmdModelInstance;
+import com.shiroha.mmdskin.compat.melodies.MelodiesCompat;
+import com.shiroha.mmdskin.compat.melodies.MmdArmPoseMapper;
 import com.shiroha.mmdskin.config.ConfigManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -99,6 +99,10 @@ public final class PerformanceHud {
                     formatBytes(metrics.modelGpuBytes()), formatBytes(metrics.textureBytes())), VALUE_COLOR);
 
             if (!models.isEmpty()) {
+                addLine("", VALUE_COLOR);
+                addLine("▶ 乐器联动", TITLE_COLOR);
+                addLine("  IM    " + MelodiesCompat.lastState(), VALUE_COLOR);
+                addLine("  骨骼  " + MmdArmPoseMapper.lastReport(), VALUE_COLOR);
                 addLine("", VALUE_COLOR);
                 addLine("▶ 模型详情", TITLE_COLOR);
                 var query = NativePortAdapters.modelQuery();

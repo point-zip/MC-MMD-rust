@@ -22,9 +22,10 @@ final class MelodiesHooks {
     }
 
     static MelodiesPose capture(LivingEntity entity) {
-        // 只对真正演奏中的乐器摆姿势：IM 的 getInstrument 对"手持未演奏"也返回
-        // 非空（fallback 分支），若不区分会把普通持物状态常态化成演奏姿势。
-        if (!isActivelyPlaying(entity)) {
+        // 与 IM 自身行为保持一致：**手持**乐器即摆姿势（IM 的 EntityModelAnimator.getInstrument
+        // 先取正在演奏的手，没有则退回任意手持乐器的手），演奏与否只影响音符调制。
+        // 之前额外加的"必须处于演奏态"门槛会导致持乐器时手臂不动，与装了 IM 的原版模型不一致。
+        if (!holdsInstrument(entity)) {
             return null;
         }
 
@@ -43,14 +44,9 @@ final class MelodiesHooks {
                 RIGHT_ARM.xRot, RIGHT_ARM.yRot, RIGHT_ARM.zRot);
     }
 
-    private static boolean isActivelyPlaying(LivingEntity entity) {
-        return isPlaying(entity, net.minecraft.world.entity.EquipmentSlot.MAINHAND)
-                || isPlaying(entity, net.minecraft.world.entity.EquipmentSlot.OFFHAND);
-    }
-
-    private static boolean isPlaying(LivingEntity entity, net.minecraft.world.entity.EquipmentSlot slot) {
-        var stack = entity.getItemBySlot(slot);
-        return stack.getItem() instanceof InstrumentItem instrument && instrument.isPlaying(stack);
+    private static boolean holdsInstrument(LivingEntity entity) {
+        return entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.MAINHAND).getItem() instanceof InstrumentItem
+                || entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.OFFHAND).getItem() instanceof InstrumentItem;
     }
 
     private static void reset(ModelPart part) {

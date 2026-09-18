@@ -9,8 +9,11 @@ import org.apache.logging.log4j.Logger;
 public final class MelodiesCompat {
     private static final Logger LOGGER = LogManager.getLogger();
     private static final String ANIMATOR_CLASS = "immersive_melodies.client.animation.EntityModelAnimator";
+    /** 连续失败多少次后判定 IM 不兼容并停用联动。 */
+    private static final int FAILURE_STREAK_LIMIT = 100;
     private static volatile Boolean loaded;
     private static volatile boolean hookFailureLogged;
+    private static volatile int failureStreak;
 
     /** 最近一次采样的可读状态，供调试 HUD 显示（判断联动是否真的生效）。 */
     private static volatile String lastState = "未采样";
@@ -47,16 +50,21 @@ public final class MelodiesCompat {
         }
         try {
             MelodiesPose pose = MelodiesHooks.capture(entity);
-            lastState = pose == null ? "持乐器未演奏" : "演奏中";
+            failureStreak = 0;
+            lastState = pose == null ? "未持乐器" : "持乐器";
             return pose;
         } catch (Throwable failure) {
-            // IM 版本不匹配等场景：记录一次后永久回退，避免每帧刷日志
-            if (!hookFailureLogged) {
-                hookFailureLogged = true;
-                LOGGER.warn("ImmersiveMelodies 姿势采样失败，联动已停用: {}", failure.toString());
+            // 连续失败才判定为不兼容（IM 版本不符等），避免偶发异常把联动永久关掉
+            if (++failureStreak >= FAILURE_STREAK_LIMIT) {
+                if (!hookFailureLogged) {
+                    hookFailureLogged = true;
+                    LOGGER.warn("ImmersiveMelodies 姿势采样连续失败，联动已停用: {}", failure.toString());
+                }
+                loaded = false;
+                lastState = "采样失败，已停用";
+            } else {
+                lastState = "采样异常 " + failureStreak;
             }
-            loaded = false;
-            lastState = "采样失败，已停用";
             return null;
         }
     }

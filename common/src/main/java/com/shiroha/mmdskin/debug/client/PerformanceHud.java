@@ -103,6 +103,7 @@ public final class PerformanceHud {
                 addLine("▶ 乐器联动", TITLE_COLOR);
                 addLine("  IM    " + MelodiesCompat.lastState(), VALUE_COLOR);
                 addLine("  骨骼  " + MmdArmPoseMapper.lastReport(), VALUE_COLOR);
+                addLine("  指向  " + MmdArmPoseMapper.lastTargets(), LABEL_COLOR);
                 addLine("", VALUE_COLOR);
                 addLine("▶ 模型详情", TITLE_COLOR);
                 var query = NativePortAdapters.modelQuery();

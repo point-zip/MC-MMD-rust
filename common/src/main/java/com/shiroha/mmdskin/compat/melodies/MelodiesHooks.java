@@ -39,9 +39,24 @@ final class MelodiesHooks {
         EntityModelAnimator.setAngles(new Adapter(entity));
 
         return new MelodiesPose(
+                instrumentName(entity),
                 HEAD.xRot, HEAD.yRot,
                 LEFT_ARM.xRot, LEFT_ARM.yRot, LEFT_ARM.zRot,
                 RIGHT_ARM.xRot, RIGHT_ARM.yRot, RIGHT_ARM.zRot);
+    }
+
+    /** 手持乐器在注册表里的名字，用于诊断显示（如 flute / lute / handpan）。 */
+    private static String instrumentName(LivingEntity entity) {
+        for (var slot : new net.minecraft.world.entity.EquipmentSlot[]{
+                net.minecraft.world.entity.EquipmentSlot.MAINHAND,
+                net.minecraft.world.entity.EquipmentSlot.OFFHAND}) {
+            var stack = entity.getItemBySlot(slot);
+            if (stack.getItem() instanceof InstrumentItem) {
+                var key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem());
+                return key == null ? "?" : key.getPath();
+            }
+        }
+        return "?";
     }
 
     private static boolean holdsInstrument(LivingEntity entity) {

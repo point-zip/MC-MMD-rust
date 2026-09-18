@@ -7,6 +7,7 @@ package com.shiroha.mmdskin.client.draw;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.shiroha.mmdskin.bridge.runtime.NativeModelMatrixPort;
 import com.shiroha.mmdskin.client.model.MmdModelInstance;
+import com.shiroha.mmdskin.compat.melodies.MmdArmPoseMapper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -63,6 +64,13 @@ public final class MmdHeldItemRenderer {
                 return;
             }
             poseStack.mulPose(handTransform);
+            // 演奏联动时手骨上带有 A-pose→垂臂 的对齐扭转（骨骼覆盖的一部分），
+            // 物品必须抵消它才能与原版"手臂角度 → 物品"的朝向一致。
+            var correction = MmdArmPoseMapper.itemOrientationCorrection(
+                    model.nativeHandle(), hand == NativeModelMatrixPort.Hand.LEFT);
+            if (correction != null) {
+                poseStack.mulPose(correction);
+            }
             poseStack.mulPose(ITEM_ORIENTATION);
             float itemScale = 10.0F * model.heldItemScale();
             poseStack.scale(itemScale, itemScale, itemScale);

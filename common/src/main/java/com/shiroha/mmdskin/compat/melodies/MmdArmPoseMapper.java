@@ -57,12 +57,37 @@ public final class MmdArmPoseMapper {
 
     private static volatile long debugLoggedHandle = Long.MIN_VALUE;
     private static volatile String lastReport = "未触发";
+    private static volatile String lastTargets = "-";
+    private static volatile long poseHandle = Long.MIN_VALUE;
+    private static volatile Quaternionf leftItemCorrection;
+    private static volatile Quaternionf rightItemCorrection;
 
     private MmdArmPoseMapper() {
     }
 
     public static String lastReport() {
         return lastReport;
+    }
+
+    public static String lastTargets() {
+        return lastTargets;
+    }
+
+    /**
+     * 物品挂点的朝向修正（左手/右手），需要在该手骨变换之后、物品朝向之前乘上。
+     *
+     * 原因：骨骼覆盖 = vanilla 手臂角度 × 静息姿态对齐（把 A-pose 掰到垂臂），
+     * 于是手骨帧比 vanilla 的手臂帧多出一个对齐扭转（本模型实测约 48°）。
+     * 物品若直接挂在这个手骨上会跟着歪掉，故用对齐的逆把它抵消掉，
+     * 使物品朝向与原版一致（原版物品只受"手臂角度 + POST"影响）。
+     *
+     * @return 该模型当前没有演奏姿势时返回 null
+     */
+    public static Quaternionf itemOrientationCorrection(long modelHandle, boolean left) {
+        if (poseHandle != modelHandle) {
+            return null;
+        }
+        return left ? leftItemCorrection : rightItemCorrection;
     }
 
     public static void apply(long modelHandle, MelodiesPose pose) {
@@ -76,14 +101,19 @@ public final class MmdArmPoseMapper {
                 toEngineSpace(vanillaRotation(pose.headPitch(), pose.headYaw(), 0.0F)));
         setFirstBone(modelHandle, NECK_BONES, new Quaternionf());
 
-        boolean left = applyArm(modelHandle, LEFT_UPPER_ARM_BONES, LEFT_ARM_REST_TARGETS,
+        ArmPose leftArm = applyArm(modelHandle, LEFT_UPPER_ARM_BONES, LEFT_ARM_REST_TARGETS,
                 FALLBACK_LEFT_ARM_REST, LEFT_INNER_ARM_BONES,
-                pose.leftArmPitch(), pose.leftArmYaw(), pose.leftArmRoll());
-        boolean right = applyArm(modelHandle, RIGHT_UPPER_ARM_BONES, RIGHT_ARM_REST_TARGETS,
+                toEngineSpace(vanillaRotation(pose.leftArmPitch(), pose.leftArmYaw(), pose.leftArmRoll())));
+        ArmPose rightArm = applyArm(modelHandle, RIGHT_UPPER_ARM_BONES, RIGHT_ARM_REST_TARGETS,
                 FALLBACK_RIGHT_ARM_REST, RIGHT_INNER_ARM_BONES,
-                pose.rightArmPitch(), pose.rightArmYaw(), pose.rightArmRoll());
+                toEngineSpace(vanillaRotation(pose.rightArmPitch(), pose.rightArmYaw(), pose.rightArmRoll())));
 
-        lastReport = "頭" + mark(head) + " 左" + mark(left) + " 右" + mark(right);
+        poseHandle = modelHandle;
+        leftItemCorrection = leftArm.itemCorrection();
+        rightItemCorrection = rightArm.itemCorrection();
+        lastReport = pose.instrument() + " 頭" + mark(head) + " 左" + mark(leftArm.applied())
+                + " 右" + mark(rightArm.applied());
+        lastTargets = "左" + describe(leftArm.engineRotation()) + " 右" + describe(rightArm.engineRotation());
         if (DEBUG) {
             logOnce(modelHandle, pose);
         }
@@ -91,22 +121,37 @@ public final class MmdArmPoseMapper {
 
     public static void clear(long modelHandle) {
         lastReport = "未演奏";
+        lastTargets = "-";
+        poseHandle = Long.MIN_VALUE;
+        leftItemCorrection = null;
+        rightItemCorrection = null;
         NativePortAdapters.poseOverride().clearBoneOverrides(modelHandle);
+    }
+
+    /** 该旋转把"手臂自然下垂"指向哪个引擎空间方向（+Z 面前 / +X 角色左 / +Y 上）。 */
+    private static String describe(Quaternionf engineRotation) {
+        Vector3f direction = engineRotation.transform(new Vector3f(ARM_REST_ENGINE));
+        return String.format("(%+.2f,%+.2f,%+.2f)", direction.x, direction.y, direction.z);
     }
 
     private static String mark(boolean applied) {
         return applied ? "✓" : "✗";
     }
 
-    private static boolean applyArm(long modelHandle, String[] boneNames, String[] restTargets,
+    /** 单侧手臂的施加结果。 */
+    private record ArmPose(boolean applied, Quaternionf engineRotation, Quaternionf itemCorrection) {
+    }
+
+    private static ArmPose applyArm(long modelHandle, String[] boneNames, String[] restTargets,
                                     Vector3f fallbackRest, String[] innerBones,
-                                    float pitch, float yaw, float roll) {
+                                    Quaternionf engineRotation) {
         Vector3f rest = queryRestDirection(modelHandle, boneNames, restTargets);
         if (!isUsable(rest)) {
             rest = fallbackRest;
         }
+        // 骨骼覆盖 = 静息姿态对齐（把 A-pose 掰到 vanilla 的垂臂）× vanilla 手臂角度
         Quaternionf restFix = new Quaternionf().rotationTo(rest, ARM_REST_ENGINE);
-        Quaternionf rotation = toEngineSpace(vanillaRotation(pitch, yaw, roll)).mul(restFix);
+        Quaternionf rotation = new Quaternionf(engineRotation).mul(restFix);
         boolean applied = setFirstBone(modelHandle, boneNames, rotation);
         // 内段关节归零：让 MMD 手臂与 vanilla 一样保持单段伸直
         for (String innerBone : innerBones) {
@@ -117,7 +162,8 @@ public final class MmdArmPoseMapper {
             System.out.printf("[MMD melodies] arm %s rest=(%.3f,%.3f,%.3f) -> target=(%.3f,%.3f,%.3f)%n",
                     boneNames[0], rest.x, rest.y, rest.z, target.x, target.y, target.z);
         }
-        return applied;
+        // 物品需要抵消 restFix（否则乐器跟着 A-pose 对齐扭转歪掉）
+        return new ArmPose(applied, engineRotation, restFix.conjugate(new Quaternionf()));
     }
 
     /** 与 ModelPart.translateAndRotate 相同的组合次序：Rz(z)·Ry(y)·Rx(x)。 */
